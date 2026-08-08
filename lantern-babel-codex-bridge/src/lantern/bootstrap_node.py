@@ -29,6 +29,7 @@ from .core import Chronicle, Lantern
 from .handshake import HandshakeRequest, create_handshake, evaluate_handshake
 from .heartbeat import create_heartbeat, evaluate_connection
 from .protocol import ProtocolMessage
+from .rendezvous import JoinMonitor
 
 
 def _json_bytes(value: Any) -> bytes:
@@ -56,13 +57,24 @@ def _validate_wire_shape(message: ProtocolMessage) -> bool:
 class LanternNode:
     """One process-local Lantern instance behind the HTTP adapter."""
 
-    def __init__(self, node_id: str, chronicle_path: str | Path):
+    def __init__(self, node_id: str, chronicle_path: str | Path, join_chronicle_path: str | Path | None = None):
         self.node_id = node_id
         self.chronicle = Chronicle(chronicle_path)
         self.lantern = Lantern(chronicle_filename=chronicle_path)
         self.agent = LanternAgent(self.lantern, chronicle=self.chronicle)
         self.bridge = LanternAgentBridge(self.agent)
         self.started_monotonic = time.monotonic()
+
+        # The rendezvous join monitor is deliberately a separate Chronicle
+        # from the belief/evidence Chronicle above. A join announcement is
+        # an audit event about contact, never an input to the kernel --
+        # keeping it in its own log makes that separation structural, not
+        # just a convention someone could forget.
+        if join_chronicle_path is None:
+            join_chronicle_path = Path(str(chronicle_path)).with_name(
+                Path(str(chronicle_path)).stem + ".joins.jsonl"
+            )
+        self.rendezvous = JoinMonitor(join_chronicle_path)
 
         # Existing persistence is authoritative. A restart restores the
         # kernel and module/audit history from the Chronicle/snapshot pair.
@@ -168,7 +180,15 @@ class _Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):  # noqa: N802 - BaseHTTPRequestHandler API
         if self.path == "/health":
-            self._respond(200, {"status": "ok", **self.node.identity(), "heartbeat": self.node.heartbeat()})
+            self._respond(
+                200,
+                {
+                    "status": "ok",
+                    **self.node.identity(),
+                    "heartbeat": self.node.heartbeat(),
+                    "rendezvous": self.node.rendezvous.health(),
+                },
+            )
             return
         if self.path == "/heartbeat":
             self._respond(200, self.node.heartbeat())
@@ -185,6 +205,27 @@ class _Handler(BaseHTTPRequestHandler):
                 request = HandshakeRequest(**body)
                 response = evaluate_handshake(request)
                 self._respond(200, asdict(response))
+                return
+
+            if self.path == "/join":
+                # An announcement, not authorization. submit() only ever
+                # writes to the rendezvous Chronicle above -- it has no
+                # access to self.node.lantern/self.node.agent/self.node.
+                # bridge, so it cannot reach belief, evidence, or Codex
+                # state even if it wanted to.
+                request, is_new, notification = self.node.rendezvous.submit(body)
+                if notification:
+                    print(notification, flush=True)
+                self._respond(
+                    200,
+                    {
+                        "accepted": True,
+                        "request_id": request.request_id,
+                        "status": request.status,
+                        "is_new": is_new,
+                        "note": "Join request received. This is not a trust or capability grant.",
+                    },
+                )
                 return
 
             if self.path == "/message":

@@ -66,6 +66,12 @@ from .protocol import (
     create_observation_share,
     validate_message,
 )
+from .rendezvous import (
+    AWAITING_HANDSHAKE,
+    EXPIRED,
+    JoinMonitor,
+    JoinRequest,
+)
 from .router import LanternRouter, RouteResult
 from .boundary import LanternBoundary
 from .architecture import (
@@ -89,6 +95,7 @@ __all__ = [
     "ArchitectureRegistry",
     "REGISTRY",
     "architecture_status",
+    "AWAITING_HANDSHAKE",
     "BEHIND",
     "BridgeResult",
     "COMPATIBLE",
@@ -101,6 +108,7 @@ __all__ = [
     "Contradiction",
     "ContinuityResult",
     "DIVERGED",
+    "EXPIRED",
     "EvaluationResult",
     "Evidence",
     "EvidenceCandidate",
@@ -115,6 +123,8 @@ __all__ = [
     "HandshakeResponse",
     "Heartbeat",
     "INCOMPATIBLE",
+    "JoinMonitor",
+    "JoinRequest",
     "KernelEvent",
     "Lantern",
     "LanternAgent",
