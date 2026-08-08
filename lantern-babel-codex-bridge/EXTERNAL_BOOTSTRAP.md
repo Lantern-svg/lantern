@@ -1,202 +1,253 @@
-# External Lantern Bootstrap
+# Running Your Own Lantern Node
 
-This is the smallest runnable process boundary for the current Basic Lantern
-Protocol. It adds HTTP transport only. The protocol message, compatibility
-rules, handshake, capability registry, boundary, router, bridge, agent, core,
-Chronicle, and snapshot behavior remain the existing implementation.
+This guide walks you through installing Lantern, starting your own node, and
+connecting it to another Lantern so the two can exchange information. It
+assumes you're comfortable with a terminal but have never seen the Lantern
+code before.
 
-The first transport is intentionally development-grade HTTP:
+## 1. What Lantern Is
 
-- `ProtocolMessage` is sent as its existing JSON object.
-- The HTTP request envelope carries `peer_capabilities`, because capabilities
-  are negotiated during handshake and are not part of the message schema.
-- The receiver validates message shape, then delegates version policy to
-  `compatibility.negotiate()`.
-- The receiver stores an observation but does not create Evidence from a remote
-  confidence claim. Evidence promotion remains a local decision.
-- Chronicle and snapshots belong to the receiving node's `--data-dir`.
+Lantern is a small program that keeps an auditable record of things it's
+told ("observations"), and separately keeps track of what it actually
+believes, with evidence and confidence attached. Those two things are kept
+deliberately apart:
 
-Do not expose this adapter directly to the public internet without the
-operator's TLS, authentication, firewall, and rate-limit controls. It binds to
-`127.0.0.1` by default. `--host 0.0.0.0` is for a controlled development
-network or a private tunnel.
+- An **observation** is just "someone told me X." Anyone can send you one.
+- **Belief** is what your own Lantern has decided to trust, based on your
+  own local evaluation.
 
-## Deployment Modes
+Receiving an observation from another Lantern never automatically becomes a
+belief on your node. Your Lantern decides that for itself, locally. This is
+true even if the sender claims very high confidence.
 
-Three modes are supported today, in increasing order of exposure. All three
-use the exact same HTTP adapter and message flow; only the bind address and
-network path change.
+Every Lantern node keeps its own history (called the **Chronicle**) as a
+hash-chained log file, so its record can be checked for tampering later.
 
-### 1. Local Only (same machine)
+## 2. What You Need
 
-Both nodes run on one machine for development or smoke testing.
+- Python 3.10 or newer
+- A terminal
+- Network access to whichever machine is running the other Lantern (see
+  section 7 for what "network access" should mean here)
+- No accounts, no API keys, no cloud services
 
-```bash
-.venv/bin/python -m lantern.bootstrap_node \
-  --node-id lantern-b --host 127.0.0.1 --port 8766 --data-dir .lantern-b
-```
-
-A connects with `--peer http://127.0.0.1:8766`. This is the safest default
-and requires no network configuration.
-
-### 2. Private Network (LAN / private subnet)
-
-Two separate machines on a network you control (home LAN, office network, a
-private cloud VPC). Bind to `0.0.0.0` so the process listens on all local
-interfaces, then give the peer the machine's private address:
+## 3. Install
 
 ```bash
-.venv/bin/python -m lantern.bootstrap_node \
-  --node-id lantern-b --host 0.0.0.0 --port 8766 --data-dir .lantern-b
-```
-
-Find the private address before sharing it with a peer; do not guess it.
-On Linux: `ip -4 addr show` or `hostname -I`. If Tailscale is installed and
-preferred over the raw LAN address: `tailscale ip`. The peer then connects
-with `--peer http://<PRIVATE_IP>:8766`. Confirm the port is reachable
-between the two machines (firewall/security-group rules on that private
-network) before assuming a connection failure is a Lantern defect.
-
-Do not publish a private network address in shared/public documentation;
-treat it the same as any other internal infrastructure detail.
-
-### 3. Private VPN / Tunnel
-
-When the two machines are not on the same LAN, route the connection through
-a private VPN or tunnel you control (Tailscale, WireGuard, an SSH tunnel,
-or equivalent) rather than exposing the port on the public internet. Bind
-Lantern to the tunnel's private interface (or to `127.0.0.1` and let the
-tunnel forward the port) and give the peer the tunnel-assigned address.
-The HTTP adapter itself does not change; only the network path between the
-two processes does.
-
-### Not Yet Supported: Direct Public Internet Exposure
-
-This transport has no authentication, no authorization, no TLS, and no
-replay protection at the HTTP layer. Binding `--host 0.0.0.0` on a machine
-with a public IP and no firewall makes `/health`, `/handshake`, and
-`/message` reachable by anyone. Do not do this. A production public
-deployment needs those controls added deliberately by the operator; that
-work has not been done and is out of scope for this bootstrap adapter.
-
-## Install
-
-Each operator uses a fresh checkout and virtual environment:
-
-```bash
-git clone <LANtern-repository-url> lantern-babel-codex-bridge
+git clone <the Lantern repository URL> lantern-babel-codex-bridge
 cd lantern-babel-codex-bridge
 python3 -m venv .venv
 .venv/bin/pip install -e ".[dev]"
 ```
 
-The bootstrap adapter uses only the Python standard library in addition to the
-installed Lantern package.
+This creates a private Python environment (`.venv`) inside the project
+folder and installs Lantern into it, along with the test tools. It does not
+touch anything outside this folder, and it does not require `sudo`.
 
-## Start Lantern B
-
-On the external operator's machine:
+You'll know it worked if the install command finishes without an error and
+you can run:
 
 ```bash
-cd lantern-babel-codex-bridge
+.venv/bin/python -c "import lantern; print(lantern.__version__ if hasattr(lantern, '__version__') else 'installed')"
+```
+
+## 4. Configure Your Node
+
+You don't need a configuration file. Everything is passed as command-line
+flags when you start your node:
+
+| Flag | Meaning | Example |
+|---|---|---|
+| `--node-id` | A name for your node. Yours. | `alice-lantern` |
+| `--host` | Which network interface to listen on | `127.0.0.1` or `0.0.0.0` |
+| `--port` | Which port to listen on | `8765` |
+| `--data-dir` | Where your Chronicle and snapshot files are stored | `./lantern-data` |
+
+Pick a `--node-id` that identifies you or your machine (not the person
+you're connecting to). Pick a `--data-dir` that's just for this node — don't
+point two different nodes at the same folder.
+
+These two things never change, no matter what flags you pass or what a peer
+claims:
+
+- Your node will always reject `CODEX_UPDATE` messages.
+- Nothing a remote peer sends can directly become belief on your node.
+  Only your own local evaluation can do that.
+
+## 5. Start Your Node
+
+```bash
 .venv/bin/python -m lantern.bootstrap_node \
-  --node-id lantern-b \
-  --host 0.0.0.0 \
-  --port 8766 \
-  --data-dir .lantern
+  --node-id alice-lantern \
+  --host 127.0.0.1 \
+  --port 8765 \
+  --data-dir ./lantern-data
 ```
 
-The node prints its protocol version, capabilities, and current continuity
-watermark. Its identity and history persist in `.lantern/lantern-b.jsonl` and
-`.lantern/lantern-b.jsonl.snapshot.json`.
+Leave this running in its own terminal (or run it in the background). It
+will create `./lantern-data` if it doesn't exist yet.
 
-For a same-machine smoke test, use `--host 127.0.0.1`.
+Use `--host 127.0.0.1` if you're only testing on your own machine.
+Use `--host 0.0.0.0` if another machine on your private network needs to
+reach you — see section 7 before doing this.
 
-## Verify B Identity
+## 6. Check Health
 
-From Lantern A's machine, replace `B_HOST` with the reachable address of B
-(from the deployment mode you chose above):
+In a second terminal, confirm your node is actually running and answering:
 
 ```bash
-curl http://B_HOST:8766/health
-curl http://B_HOST:8766/handshake
+curl http://127.0.0.1:8765/health
 ```
 
-The response must show protocol `0.82`, `evidence_exchange: true`, and
-`codex_update: false`.
+You should get back something like:
 
-## Send One Observation From Lantern A
+```json
+{
+  "node_id": "alice-lantern",
+  "protocol_version": "0.82",
+  "status": "ok",
+  "capabilities": {"handshake": true, "evidence_exchange": true, "codex_update": false, ...},
+  "watermark": {"step": 0, "chain": "GENESIS"},
+  "heartbeat": {"uptime_seconds": ..., ...}
+}
+```
 
-Lantern A is an independently operated client process with its own node ID and
-local Chronicle directory:
+If `status` is `"ok"`, your node is alive and reachable. `watermark` is your
+node's position in its own history — a fresh node starts at `step: 0` and
+`chain: "GENESIS"`.
+
+## 7. Connect to Another Lantern
+
+To exchange anything with another Lantern, you need the address it's
+actually reachable at. Do not guess this — find it directly. In order of
+preference:
+
+1. **Same machine** — use `127.0.0.1` and the peer's port. Safest, no
+   network configuration needed.
+2. **Private LAN** — if you and your peer are on the same private network
+   (home, office, private cloud), find your machine's private address
+   (`ip -4 addr show` or `hostname -I` on Linux) and share that, not
+   `127.0.0.1`.
+3. **Private VPN / tunnel** — if you're on different networks, use
+   something like Tailscale, WireGuard, or an SSH tunnel, and connect
+   through the address that tunnel gives you.
+
+**Do not** put port 8765 (or whatever port you choose) directly on the
+public internet. This transport has no authentication, no TLS, and no
+replay protection yet — see section 12.
+
+Once you have the peer's address, confirm you can reach it before trying to
+exchange anything:
 
 ```bash
-cd lantern-babel-codex-bridge
+curl http://PEER_ADDRESS:PEER_PORT/health
+curl http://PEER_ADDRESS:PEER_PORT/handshake
+```
+
+The handshake response should show a `protocol_version` that matches yours
+(`0.82`) and `codex_update: false`.
+
+## 8. Send Your First Observation
+
+This is the actual exchange. From your machine, send one observation to
+your peer:
+
+```bash
 .venv/bin/python -m lantern.bootstrap_client \
-  --node-id lantern-a \
-  --peer http://B_HOST:8766 \
-  --source operator-a \
+  --node-id alice-lantern-client \
+  --peer http://PEER_ADDRESS:PEER_PORT \
+  --source alice \
   --content "water freezes near 0 C at sea level" \
   --reliability 0.95 \
-  --data-dir .lantern-a
+  --data-dir ./lantern-client-data
 ```
 
-The client performs, in order:
+Behind the scenes this does four things, in order: checks the peer is
+healthy, performs a handshake, checks version/capability compatibility, and
+then sends the observation. You'll see the full JSON result printed,
+including your peer's response and their updated watermark.
 
-1. B identity discovery.
-2. A handshake request to B.
-3. Compatibility and capability negotiation.
-4. An `OBSERVATION_SHARE` using the existing `ProtocolMessage`.
-5. Receipt of B's result, including source, protocol, message type, and B's
-   updated watermark.
+A successful send shows `"accepted": true` and
+`"action": "OBSERVATION_CREATED"` inside the `exchange` section of the
+output.
 
-A successful exchange returns `accepted: true` and
-`action: "OBSERVATION_CREATED"`.
+## 9. Verify Your Chronicle
 
-## Local Evaluation On B
-
-Receiving an observation does not create Evidence. That is deliberate:
-
-```python
-from lantern.agent import LanternAgent
-from lantern.core import Lantern
-
-agent = LanternAgent(Lantern(chronicle_filename=".lantern/lantern-b.jsonl"))
-```
-
-The operator may inspect the received observation, apply local evaluation, and
-only then call `agent.add_evidence(concept, observation_id, weight, sign)`.
-Remote reliability/confidence is not automatically promoted to local belief.
-`CODEX_UPDATE` is disabled and rejected by the receiver's capability policy.
-
-## Rejection Checks
-
-The transport tests cover:
-
-- different major protocol version: rejected by compatibility
-- missing `evidence_exchange`: rejected by the router before the agent
-- malformed message shape: HTTP 400, no kernel mutation
-- `CODEX_UPDATE`: rejected because `codex_update` is false
-- remote confidence/reliability: observation only, zero Evidence created
-
-Run the full verification suite:
+If you're the one *receiving* an observation, check that your own node
+actually recorded it — don't just trust the network response:
 
 ```bash
-.venv/bin/python -m pytest -q
+cat ./lantern-data/YOUR-NODE-ID.jsonl
 ```
 
-## Current Boundary
+Each line is one event. Right after receiving an observation you should see
+exactly one `OBSERVATION_CREATED` entry with the sender's claimed content,
+source, and reliability. You will **not** see any evidence or belief event
+from this alone — that only happens if you explicitly run your own local
+evaluation and call `add_evidence(...)` yourself. Receiving information is
+not the same as trusting it, and Lantern keeps that boundary strict on
+purpose.
 
-This is ready for the first controlled external participant over a private
-network or tunnel. It is not a production public service: TLS, authentication,
-peer authorization, replay protection at the HTTP transport layer, and a
-multi-hop deployment policy are still operator responsibilities. No core
-rewrite is required to validate the first external Lantern connection.
+You can also re-check your health endpoint — the `watermark.step` should
+have advanced by one for each event recorded.
 
-This has been verified across a real private-network address boundary
-(bind `0.0.0.0`, connect via the host's private interface address rather
-than `127.0.0.1`), with two independent processes and independent data
-directories, including handshake, capability negotiation, observation
-exchange, Chronicle persistence, and restart recovery. Direct public
-internet exposure remains explicitly unsupported until authentication, TLS,
-and replay protection are added.
+## 10. Restart / Recovery
+
+Your Chronicle and snapshot files live entirely in `--data-dir`. If you stop
+your node and start it again pointed at the same `--data-dir`, it picks up
+exactly where it left off — same watermark, same history, same node
+identity. Nothing needs to be re-synced or re-negotiated with your peer.
+
+```bash
+# stop the node (Ctrl+C, or kill the process)
+.venv/bin/python -m lantern.bootstrap_node \
+  --node-id alice-lantern \
+  --host 127.0.0.1 \
+  --port 8765 \
+  --data-dir ./lantern-data
+curl http://127.0.0.1:8765/health   # watermark should match what it was before you stopped it
+```
+
+## 11. Troubleshooting
+
+- **"Connection refused"** — your node (or your peer's) isn't running, or
+  you have the wrong port. Confirm with `ps` / `curl .../health` on the
+  machine running the node itself first.
+- **`/health` works on `127.0.0.1` but not on your private IP** — the node
+  was started with `--host 127.0.0.1`. Restart it with `--host 0.0.0.0` to
+  listen on all interfaces, then re-check.
+- **Peer unreachable from another machine but reachable locally** — this is
+  almost always a firewall or security-group rule on the network between
+  the two machines, not a Lantern problem. Confirm the port is open between
+  the two machines before assuming Lantern is broken.
+- **Handshake shows a different `protocol_version`** — the two installs are
+  different versions of Lantern. Update whichever one is behind.
+- **"Did my observation actually arrive?"** — check the JSON your client
+  printed for `"accepted": true`, then independently confirm by reading the
+  receiving node's own Chronicle file (section 9). Don't rely on one side's
+  word alone.
+- **"Where did my observation go?"** — it's an observation, not a belief.
+  It's sitting in the receiving node's Chronicle as a record of "someone
+  told me this." It stays there until that node's operator decides,
+  locally, to evaluate and promote it. Nothing happens to it automatically.
+
+## 12. Security Warning
+
+This transport is intentionally minimal: plain HTTP, no authentication, no
+TLS, no replay protection. That's fine for a private network or a VPN/tunnel
+you control, because you're already restricting who can reach the port at
+all. It is **not** safe to expose directly to the public internet. If you
+bind `--host 0.0.0.0` on a machine with a public IP and no firewall, anyone
+who finds the port can call `/health`, `/handshake`, and `/message` on your
+node.
+
+None of that changes what a peer can actually do to you, though: a remote
+node can send you observations, but it cannot make your Lantern believe
+anything, cannot update your Codex, and cannot mutate your local evidence or
+belief state. The worst a malicious or careless peer can do over this
+transport is fill your Chronicle with observations you never asked for —
+which you can always choose to ignore, since receiving is not trusting.
+
+Adding real authentication, TLS, and replay protection is expected before
+anyone runs this on a public network, and is intentionally left to the
+operator rather than assumed.

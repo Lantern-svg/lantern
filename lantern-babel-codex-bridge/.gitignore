@@ -7,3 +7,4 @@ __pycache__/
 # Runtime Chronicle/snapshot artifacts (not source)
 chronicle*.jsonl
 *.snapshot.json
+lantern-data/
