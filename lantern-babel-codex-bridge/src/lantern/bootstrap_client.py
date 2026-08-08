@@ -9,9 +9,11 @@ from pathlib import Path
 from urllib.request import Request, urlopen
 
 from .compatibility import DEFAULT_CAPABILITIES
+from .continuity import local_watermark
 from .core import Chronicle, Lantern
 from .handshake import create_handshake
-from .protocol import create_observation_share
+from .heartbeat import evaluate_connection
+from .protocol import create_observation_share, PROTOCOL_VERSION
 
 
 def _request(url: str, method: str = "GET", payload: dict | None = None) -> dict:
@@ -57,11 +59,25 @@ def main(argv=None):
             "peer_capabilities": local_handshake.capabilities,
         },
     )
+
+    # Heartbeat/connection-state check: liveness + identity + Chronicle
+    # position reporting only. This never grants trust or capabilities
+    # and never changes local belief -- it is purely operator-facing
+    # information, produced by the existing continuity/compatibility
+    # comparison logic (lantern.heartbeat.evaluate_connection()).
+    peer_heartbeat = _request(peer + "/heartbeat")
+    connection_state = evaluate_connection(
+        PROTOCOL_VERSION,
+        local_watermark(local_lantern),
+        peer_heartbeat,
+    ).to_dict()
+
     print(json.dumps({
         "local_node_id": args.node_id,
         "peer": remote,
         "handshake": handshake_response,
         "exchange": result,
+        "connection_state": connection_state,
         "local_watermark": {
             "step": local_lantern.kernel.step,
             "chain": local_lantern.bus.chronicle.chain,

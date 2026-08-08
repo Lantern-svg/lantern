@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import time
 from dataclasses import asdict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -26,6 +27,7 @@ from .compatibility import DEFAULT_CAPABILITIES, negotiate
 from .continuity import local_watermark
 from .core import Chronicle, Lantern
 from .handshake import HandshakeRequest, create_handshake, evaluate_handshake
+from .heartbeat import create_heartbeat, evaluate_connection
 from .protocol import ProtocolMessage
 
 
@@ -60,6 +62,7 @@ class LanternNode:
         self.lantern = Lantern(chronicle_filename=chronicle_path)
         self.agent = LanternAgent(self.lantern, chronicle=self.chronicle)
         self.bridge = LanternAgentBridge(self.agent)
+        self.started_monotonic = time.monotonic()
 
         # Existing persistence is authoritative. A restart restores the
         # kernel and module/audit history from the Chronicle/snapshot pair.
@@ -73,6 +76,34 @@ class LanternNode:
             "capabilities": dict(DEFAULT_CAPABILITIES),
             "watermark": watermark.to_dict(),
         }
+
+    def heartbeat(self) -> dict:
+        """Liveness + identity + Chronicle position, read-only.
+
+        Wraps heartbeat.create_heartbeat() over the same
+        continuity.local_watermark() the rest of the adapter already
+        uses. Does not grant capabilities and does not touch belief,
+        evidence, or Codex state.
+        """
+        watermark = local_watermark(self.lantern)
+        return create_heartbeat(
+            node_id=self.node_id,
+            protocol_version=create_handshake().protocol_version,
+            started_monotonic=self.started_monotonic,
+            watermark=watermark,
+        ).to_dict()
+
+    def connection_state(self, peer_heartbeat: dict | None) -> dict:
+        """Compare a peer's self-reported heartbeat against local state.
+
+        Non-authoritative: this is operator-facing information about
+        reachability/version/continuity, never a trust or capability
+        decision.
+        """
+        watermark = local_watermark(self.lantern)
+        return evaluate_connection(
+            create_handshake().protocol_version, watermark, peer_heartbeat
+        ).to_dict()
 
     def handshake(self) -> HandshakeRequest:
         request = create_handshake(dict(DEFAULT_CAPABILITIES))
@@ -137,7 +168,10 @@ class _Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):  # noqa: N802 - BaseHTTPRequestHandler API
         if self.path == "/health":
-            self._respond(200, {"status": "ok", **self.node.identity()})
+            self._respond(200, {"status": "ok", **self.node.identity(), "heartbeat": self.node.heartbeat()})
+            return
+        if self.path == "/heartbeat":
+            self._respond(200, self.node.heartbeat())
             return
         if self.path == "/handshake":
             self._respond(200, asdict(self.node.handshake()))
@@ -159,6 +193,13 @@ class _Handler(BaseHTTPRequestHandler):
                 if not isinstance(message, dict) or not isinstance(peer_capabilities, dict):
                     raise ValueError("message and peer_capabilities objects are required")
                 self._respond(200, self.node.receive(message, peer_capabilities))
+                return
+
+            if self.path == "/connection-state":
+                peer_heartbeat = body.get("peer_heartbeat")
+                if peer_heartbeat is not None and not isinstance(peer_heartbeat, dict):
+                    raise ValueError("peer_heartbeat must be an object or omitted")
+                self._respond(200, self.node.connection_state(peer_heartbeat))
                 return
 
             self._respond(404, {"error": "Not found"})
