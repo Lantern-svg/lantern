@@ -128,6 +128,7 @@ __all__ = [
     "create_handshake",
     "create_message",
     "create_observation_share",
+    "create_outcome",
     "evaluate_handshake",
     "explain_comparison",
     "explain_comparisons",
