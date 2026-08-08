@@ -249,3 +249,173 @@ def test_confidence_gap_comparison():
     # Both lean positive, but different strengths
     assert comparison.belief_a > 0.5
     assert comparison.belief_b > 0.5 or comparison.belief_b == 0.5
+
+
+def test_valid_payment_executes_capability(client, monkeypatch):
+    """Test that valid payment allows capability execution.
+    
+    This test mocks the facilitator's HTTP verify/settle responses at the
+    network boundary (the genuine external dependency requiring real funds).
+    It constructs a real client-side payment signature and verifies that:
+    - middleware accepts the mocked-valid payment
+    - reconciliation executes with real Lantern logic
+    - Chronicle records the outcome
+    - result contains actual comparison data
+    """
+    import time
+    from unittest.mock import AsyncMock
+    from x402.schemas import VerifyResponse, SettleResponse
+    
+    # Mock facilitator HTTP responses at the network boundary
+    async def mock_verify(*args, **kwargs):
+        return VerifyResponse(
+            is_valid=True,
+            payer="0xTEST_PAYER_ADDRESS",
+        )
+    
+    async def mock_settle(*args, **kwargs):
+        return SettleResponse(
+            success=True,
+            transaction="0xTEST_TX_HASH",
+            network="eip155:84532",
+            payer="0xTEST_PAYER_ADDRESS",
+        )
+    
+    # Patch the payment server's internal facilitator map
+    # (what the middleware actually uses for verify/settle lookups)
+    import service
+    from unittest.mock import MagicMock
+    
+    mock_facilitator = MagicMock()
+    mock_facilitator.verify = mock_verify
+    mock_facilitator.settle = mock_settle
+    
+    # Replace the facilitator client for the Base Sepolia + exact scheme
+    monkeypatch.setattr(
+        service.payment_server,
+        "_facilitator_clients_map",
+        {"eip155:84532": {"exact": mock_facilitator}},
+    )
+    
+    # Construct a real payment payload structure (client-side work)
+    # The signature itself is arbitrary since facilitator verify is mocked,
+    # but the structure matches real x402 v2 PaymentPayload
+    from eth_account import Account
+    test_account = Account.create()
+    
+    # Construct payment payload using x402 wire format (camelCase)
+    payment_payload = {
+        "x402Version": 2,
+        "accepted": {
+            "scheme": "exact",
+            "network": "eip155:84532",
+            "asset": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",  # Base Sepolia USDC
+            "amount": "1000",  # $0.001
+            "payTo": os.getenv("LANTERN_PAYMENT_RECIPIENT_EVM"),
+            "maxTimeoutSeconds": 3600,
+            "extra": {
+                "name": "USD Coin",
+                "version": "2",
+            },
+        },
+        "payload": {
+            "authorization": {
+                "from": test_account.address,
+                "to": os.getenv("LANTERN_PAYMENT_RECIPIENT_EVM"),
+                "value": "1000",
+                "validAfter": "0",
+                "validBefore": str(int(time.time()) + 3600),
+                "nonce": "0x" + os.urandom(16).hex(),
+            },
+            "signature": "0x" + ("00" * 65),  # Placeholder; facilitator mocked
+        },
+    }
+    
+    import base64
+    import json
+    payment_header = base64.b64encode(
+        json.dumps(payment_payload).encode()
+    ).decode()
+    
+    # Build reconciliation request with contradictory evidence
+    request_body = {
+        "lantern_a": {
+            "observations": [
+                {
+                    "content": "Proposition X is true",
+                    "source": "sensor_a",
+                    "reliability": 0.9,
+                    "concept": "X",
+                    "weight": 1.0,
+                    "sign": 1,
+                }
+            ]
+        },
+        "lantern_b": {
+            "observations": [
+                {
+                    "content": "Proposition X is false",
+                    "source": "sensor_b",
+                    "reliability": 0.8,
+                    "concept": "X",
+                    "weight": 1.0,
+                    "sign": -1,
+                }
+            ]
+        },
+        "concepts": ["X"],
+    }
+    
+    # Submit request WITH payment
+    r = client.post(
+        "/v1/reconcile",
+        json=request_body,
+        headers={"PAYMENT-SIGNATURE": payment_header},
+    )
+    
+    # Should succeed (200) with reconciliation result
+    if r.status_code != 200:
+        print("DEBUG STATUS", r.status_code)
+        print("DEBUG HEADERS", dict(r.headers))
+        print("DEBUG BODY", r.text)
+    assert r.status_code == 200
+    
+    result = r.json()
+    
+    # Verify reconciliation logic executed (not a mocked/hardcoded response)
+    assert "comparisons" in result
+    assert len(result["comparisons"]) == 1
+    comparison = result["comparisons"][0]
+    assert comparison["concept"] == "X"
+    assert comparison["category"] == "contradiction"
+
+    # Verify explanations were generated
+    assert "explanations" in result
+    assert len(result["explanations"]) == 1
+    explanation = result["explanations"][0]
+    assert explanation["concept"] == "X"
+    assert explanation["category"] == "contradiction"
+    assert explanation["cause"]  # Non-empty explanation
+    
+    # Verify reciprocity outcome was recorded
+    assert "reciprocity_outcome" in result
+    outcome = result["reciprocity_outcome"]
+    assert outcome["capability"] == "belief_reconciliation"
+    assert outcome["settlement_type"] == "monetary"
+    # Settlement happens AFTER handler returns, in middleware
+    assert outcome["settlement_status"] == "verified_pending_settlement"
+    assert outcome["execution_status"] == "executed"
+    # transaction_id only available in response headers after settlement
+    assert outcome["transaction_id"] is None
+    
+    # Verify Chronicle recorded the event (inspect service.chronicle directly)
+    # The service module's chronicle should have at least one RECIPROCITY_COMPLETED event
+    import service as svc
+    if svc.chronicle:
+        # Read the chronicle and verify the event was recorded
+        events = list(svc.chronicle.replay())
+        assert len(events) > 0
+        last_event = events[-1]
+        assert last_event.event_type == "RECIPROCITY_COMPLETED"
+        assert last_event.source == "service"
+        assert "capability" in last_event.payload

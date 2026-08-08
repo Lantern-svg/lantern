@@ -60,6 +60,9 @@ class ObservationInput(BaseModel):
     content: str
     source: str
     reliability: float = Field(default=1.0, ge=0.0, le=1.0)
+    concept: Optional[str] = None
+    weight: float = Field(default=1.0, ge=0.0)
+    sign: int = Field(default=1, ge=-1, le=1)
 
 
 class BeliefStateInput(BaseModel):
@@ -138,14 +141,21 @@ def build_lantern_from_state(state: BeliefStateInput) -> Lantern:
     """Build a Lantern instance from observation inputs."""
     lantern = Lantern()
     agent = LanternAgent(lantern)
-    
+
     for obs in state.observations:
-        agent.observe(
+        observation = agent.observe(
             content=obs.content,
             source=obs.source,
             reliability=obs.reliability,
         )
-    
+        if obs.concept:
+            agent.add_evidence(
+                obs.concept,
+                observation.id,
+                obs.weight,
+                obs.sign,
+            )
+
     return lantern
 
 
@@ -170,14 +180,6 @@ async def reconcile_beliefs(request: Request, body: ReconciliationRequest):
     - Increase confidence
     """
     # Payment already verified by middleware at this point
-    # Extract payment info from request state (set by middleware)
-    payment_payload = getattr(request.state, "payment_payload", None)
-    payment_requirements = getattr(request.state, "payment_requirements", None)
-    
-    transaction_id = None
-    if payment_payload and payment_requirements:
-        transaction_id = payment_payload.payload.get("transaction")
-    
     initiator = request.client.host if request.client else "unknown"
     provider = "lantern-service"
     
@@ -231,6 +233,9 @@ async def reconcile_beliefs(request: Request, body: ReconciliationRequest):
         }
         
         # Record reciprocity outcome in Chronicle
+        # Note: At this point payment is VERIFIED, not yet SETTLED.
+        # Settlement occurs after the handler returns, in the middleware.
+        # This is an architectural limitation: Chronicle records before settlement completes.
         outcome = create_outcome(
             initiator=initiator,
             provider=provider,
@@ -241,10 +246,10 @@ async def reconcile_beliefs(request: Request, body: ReconciliationRequest):
                 "network": TESTNET_NETWORK,
                 "recipient": PAYMENT_RECIPIENT_EVM,
             },
-            settlement_status="settled",
+            settlement_status="verified_pending_settlement",
             execution_status="executed",
             result=result,
-            transaction_id=transaction_id,
+            transaction_id=None,  # Not available until after handler returns
         )
         
         if chronicle:
@@ -274,9 +279,9 @@ async def reconcile_beliefs(request: Request, body: ReconciliationRequest):
                 "network": TESTNET_NETWORK,
                 "recipient": PAYMENT_RECIPIENT_EVM,
             },
-            settlement_status="settled",
+            settlement_status="verified_pending_settlement",
             execution_status="failed",
-            transaction_id=transaction_id,
+            transaction_id=None,
             error=str(e),
         )
         
