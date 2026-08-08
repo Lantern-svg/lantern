@@ -28,6 +28,8 @@ from .continuity import local_watermark
 from .core import Chronicle, Lantern
 from .handshake import HandshakeRequest, create_handshake, evaluate_handshake
 from .heartbeat import create_heartbeat, evaluate_connection
+from .participants import find as find_participant
+from .participants import inspect_all, next_verification_step
 from .protocol import ProtocolMessage
 from .rendezvous import JoinMonitor
 
@@ -195,6 +197,28 @@ class _Handler(BaseHTTPRequestHandler):
             return
         if self.path == "/handshake":
             self._respond(200, asdict(self.node.handshake()))
+            return
+        if self.path == "/participants":
+            # Read-only inspection: claims as recorded, never re-verified
+            # here and never treated as authorization. See participants.py.
+            views = [view.to_dict() for view in inspect_all(self.node.rendezvous)]
+            self._respond(200, {"participants": views})
+            return
+        if self.path.startswith("/participants/") and self.path.endswith("/next-step"):
+            request_id = self.path[len("/participants/") : -len("/next-step")]
+            view = find_participant(self.node.rendezvous, request_id)
+            if view is None:
+                self._respond(404, {"error": "Unknown request_id"})
+                return
+            # Advice text only -- does not contact the participant.
+            self._respond(
+                200,
+                {
+                    "request_id": request_id,
+                    "participant": view.to_dict(),
+                    "next_step": next_verification_step(view),
+                },
+            )
             return
         self._respond(404, {"error": "Not found"})
 
