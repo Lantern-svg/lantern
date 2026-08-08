@@ -27,6 +27,11 @@ Core positions:
 
 See [ARCHITECTURE.md](./ARCHITECTURE.md) for the full module breakdown, data model, and open (not-yet-frozen) specification items.
 
+For the first controlled external Lantern connection, see
+[EXTERNAL_BOOTSTRAP.md](./EXTERNAL_BOOTSTRAP.md). It documents the minimal
+HTTP transport adapter and exact install/start/connect commands without
+changing the core protocol or trust model.
+
 ## Modules
 
 - **Observation Engine** — captures incoming information as structured, sourced observations.
