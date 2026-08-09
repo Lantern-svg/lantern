@@ -1,0 +1,26 @@
+{
+  "agent": "Lantern",
+  "capability": "Belief Reconciliation",
+  "implemented": true,
+  "input": {
+    "type": "two independent belief states",
+    "format": "HTTP/JSON"
+  },
+  "output": [
+    "evidence-aware comparison",
+    "contradiction classification",
+    "confidence comparison",
+    "plain-language explanation"
+  ],
+  "protocol": "HTTP/JSON",
+  "endpoint": "configured runtime endpoint",
+  "method": "POST",
+  "path": "/v1/reconcile",
+  "settlement": "x402",
+  "payment": {
+    "mode": "per-call",
+    "price": "configurable"
+  },
+  "trust": "payment does not imply truth or trust",
+  "contact": "configured agent/service endpoint"
+}
