@@ -200,6 +200,44 @@ is explicitly choosing to accept unauthenticated observations from anyone
 who can reach the port. `bootstrap_client --legacy` is the matching client
 flag; without it, the client always uses the secure workflow.
 
+Concretely, this flag reactivates the original, pre-v0.83 acceptance path
+verbatim: `lantern.bridge.LanternAgentBridge` and `lantern.router`, gating
+acceptance on nothing but negotiated (self-declared) capabilities. It is
+**not** a relaxed version of the new identity/session/authorization
+pipeline — it is a second, independent code path that predates that
+pipeline and never gained any of its checks. Turning on legacy mode does
+not weaken the secure pipeline (a session-holding caller is always routed
+through the secure path regardless of this flag), but it does mean the
+port is, in parallel, running the old unauthenticated implementation for
+anyone who doesn't present a session.
+
+### Full HTTP surface
+
+For completeness, every route your node exposes once it's running:
+
+```
+GET  /health                        node status, identity, watermark, legacy mode flag
+GET  /heartbeat                     uptime/liveness only
+GET  /handshake                     protocol/capability advertisement
+GET  /participants                  read-only: recorded rendezvous/join claims as-is,
+                                     never re-verified here, never authorization
+GET  /participants/<id>/next-step   read-only advisory text for a given claim;
+                                     does not contact the participant
+POST /identity/challenge            issue a fresh identity challenge
+POST /identity/respond              respond to a challenge (signed proof)
+POST /identity/verify               verify a proof, returns identity_status
+POST /session/open                  open a short-lived verified session
+POST /join                          rendezvous/announcement (untrusted claim only)
+POST /message                       secure path if session_id present; legacy path
+                                     only if --allow-legacy-message-ingestion
+POST /connection-state              connection/negotiation status
+```
+
+`/participants` and `/participants/<id>/next-step` are read-only and never
+mutate state or contact a peer — see `src/lantern/participants.py`. They
+exist to let you inspect what's been claimed via rendezvous/`/join` without
+treating any of it as verified.
+
 ## 8. Send Your First Observation
 
 This is the actual exchange. From your machine, send one observation to
@@ -306,20 +344,42 @@ curl http://127.0.0.1:8765/health   # watermark should match what it was before 
 ## 12. Security Warning
 
 Even in the secure default mode, this transport is intentionally minimal:
-plain HTTP, no TLS, no transport-layer encryption. Identity verification
-(section 7a) proves *who* you're talking to using real signatures, and
-authorization decides *what* they're allowed to do — but the bytes on the
-wire are not encrypted, so anyone who can observe the network path can read
-the traffic (though not forge a valid identity signature or replay it into
-a new session, since sessions are bound and expire). That's fine for a
-private network or a VPN/tunnel you control, because you're already
-restricting who can reach the port and read the traffic on the wire. It is
-**not** safe to expose directly to the public internet. If you bind
-`--host 0.0.0.0` on a machine with a public IP and no firewall, anyone who
-finds the port can call `/health` and `/handshake`, and can attempt
-`/message`, `/identity/*`, and `/session/open` — though without a private
-key matching a node id you've explicitly authorized, they still can't get
-an observation accepted unless you've turned on
+plain HTTP, no TLS, no transport-layer encryption of any kind. Be precise
+about what this does and does not mean:
+
+- **Cryptographic identity verification (section 7a) proves who signed a
+  message. It does not encrypt anything.** Ed25519 signatures prove the
+  peer controls a specific private key; they say nothing about whether
+  anyone else can read the bytes going over the wire.
+- **A session ID is an opaque bearer credential, not a signature.** Once
+  `/session/open` issues one, presenting that exact string is what proves
+  "this request belongs to the same verified session" for the rest of its
+  TTL (`--session-ttl-seconds`, default 300s) — the request itself is not
+  re-signed or re-proven each time.
+- **Anyone who can observe your network path can read a session ID in
+  transit**, because the transport is unencrypted HTTP. If they capture it
+  within its validity window, they can reuse it to make requests that look
+  like they came from the verified session — subject to the existing
+  source-binding (`expected_source` must still match), expiry, and replay
+  controls (a message replayed via its `message_id` is still rejected by
+  the observation ledger), but **not** subject to any check that would
+  detect the request came from a different physical sender than the one
+  who originally opened the session. Identity verification and session
+  issuance do not, by themselves, prevent this — they were never designed
+  to provide transport confidentiality, only proof-of-key-control at the
+  moment of verification.
+- That's an acceptable risk on a private network or a VPN/tunnel you
+  control, because you're already restricting who can observe traffic on
+  the wire in the first place. It is **not** safe to expose directly to
+  the public internet without adding your own transport encryption in
+  front of it.
+
+If you bind `--host 0.0.0.0` on a machine with a public IP and no
+firewall, anyone who finds the port can call `/health`, `/handshake`, and
+the read-only `/participants` routes, and can attempt `/message`,
+`/identity/*`, and `/session/open` — though without a private key
+matching a node id you've explicitly authorized, they still can't get an
+observation accepted unless you've turned on
 `--allow-legacy-message-ingestion`.
 
 If you do turn on `--allow-legacy-message-ingestion`, you are explicitly
@@ -340,4 +400,6 @@ you can always choose to ignore — receiving is not trusting.
 Adding real transport encryption (TLS) is expected before anyone runs this
 on a public network, and is intentionally left to the operator (e.g. a
 reverse proxy or VPN/tunnel terminating TLS in front of the node) rather
-than assumed by Lantern itself.
+than assumed by Lantern itself. TLS is what would actually close the
+session-ID-observation gap described above; identity verification alone
+does not and cannot.
