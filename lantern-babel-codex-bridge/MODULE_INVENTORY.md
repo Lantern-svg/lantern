@@ -2,9 +2,18 @@
 
 Repo root: `/home/ubuntu/.openclaw/workspace/lantern-babel-codex-bridge/`
 Package: `src/lantern/`
-Full test run: `.venv/bin/python -m pytest tests/ -q` → **142 passed, 0 failed** (confirmed by running it; no files were modified). This count predates the `scars` module below and several other modules added since (`bootstrap_client`, `bootstrap_node`, `heartbeat`, `joins_cli`, `memory_boundary`, `participants`, `reciprocity`, `rendezvous`); see the individual module sections for their own current test counts. This file has not been fully re-audited module-by-module since those additions — the `scars` entry below was added and verified as part of the Scar-persistence documentation pass; the others remain an open documentation-drift item (see `ARCHITECTURE.md` "Open items before v1").
+Full test run: `.venv/bin/python -m pytest tests/ -q` → **698 passed, 0 failed** (confirmed by running it during the v0.84 release gate). This file still is not a complete per-module re-audit of every newer module, but its header now reflects the current tested baseline rather than the long-stale 142-test snapshot.
 
-Package surface note (`__init__.py`, not in the 14 covered below): it does no independent logic. It re-exports selected classes/functions from every other module (`core`, `agent`, `compatibility`, `continuity`, `handshake`, `protocol`, `router`, `boundary`, `architecture`, `bridge`, `codex_compare`, `codex_explanation`, `evaluation`, `federation`, `scars`) into a flat `lantern.__all__` namespace and sets `__version__ = "0.83"`. It has no dedicated test file and contains no behavior of its own to test.
+Package surface note (`__init__.py`, not in the original covered set): it does no independent logic. It re-exports selected classes/functions from the package into a flat `lantern.__all__` namespace, now including the v0.84 additions (`orchestration`, `contact_ledger`, `compass`, `compression`, `mcp_client`, `mcp_integration`, `receiver_readiness`), and sets `__version__ = "0.84"`. It has no dedicated test file and contains no behavior of its own to test.
+
+v0.84 release-scope additions now present in the public package surface:
+- `orchestration.py` — capability registry, verification policy, scoped delegation records, planner, provenance tags, self-change proposals.
+- `contact_ledger.py` — evidence-backed contact-state ladder with no inferred upgrades.
+- `compass.py` — read-only orientation layer answering WHAT matters / WHY / WHAT is allowed / WHAT is next.
+- `compression.py` — read-only validator/scar-builder that refuses semantic state-collapse.
+- `mcp_client.py` — bounded MCP stdio client with all third-party `mcp` imports isolated here.
+- `mcp_integration.py` — discovery/binding/delegation/execution/provenance/verification boundary for MCP-exposed capabilities.
+- `receiver_readiness.py` — read-only operator/evaluator path from `JOIN_REQUESTED` through compatibility, identity verification, authorization, contact-ledger translation, and Compass orientation.
 
 ---
 

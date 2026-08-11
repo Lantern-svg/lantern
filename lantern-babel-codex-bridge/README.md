@@ -83,6 +83,31 @@ direct path to belief or evidence) — see the module docstrings in
 - **The Codex** — a semantic graph of concepts (not documents), with explicit-meaning edges. Vector search is used for retrieval only; vectors are navigation, never truth.
 - **The Scar Engine** — turns a *meaningful* outcome (a real failure, contradiction, incompatibility, or significant success — never routine traffic) into a durable, Chronicle-backed record that survives restart and replay. A Scar is remembered experience, not an automatic belief change; see [ARCHITECTURE.md](./ARCHITECTURE.md) for the full gating rule and the interoperability loop it closes (DISCOVER → … → INTEGRATE → SCAR → MEMORY).
 
+## What's in v0.84
+
+Beyond the core evidence/belief kernel and inter-instance protocol, the
+current public system now also includes:
+
+- **Orchestration** — a conservative capability/delegation layer with
+  explicit verification policy and provenance tracking.
+- **Compass** — a read-only orientation layer that answers WHAT matters,
+  WHY, WHAT is allowed, and WHAT is next from real Lantern state.
+- **Compression** — a validator that turns meaningful outcomes into durable
+  Scar records without silently upgrading semantics.
+- **Contact ledger** — an evidence-backed contact-state ladder that keeps
+  path-found / sent / received / acknowledged / identity-verified /
+  collaboration-authorized distinct.
+- **Live MCP integration** — a bounded stdio MCP client and integration
+  layer that exposes real Lantern capabilities through MCP without turning
+  discovery into authorization.
+- **Receiver readiness** — an explicit, tested inbound path from
+  `JOIN_REQUESTED` through compatibility, identity verification,
+  authorization, and verified-peer status using existing modules only.
+
+These are layered additions on top of the same core principle: Lantern
+tracks why a belief is held, how strong it is, and what would change it,
+without collapsing observation into trust or transport success into truth.
+
 ## Target users
 
 Developers building AI systems that need an interoperability layer above one or more models, rather than a replacement for any of them. Candidate applications: human↔AI collaboration, AI↔AI communication, multi-agent reasoning, long-term memory systems, research assistants, autonomous software agents.

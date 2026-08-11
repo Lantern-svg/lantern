@@ -177,13 +177,15 @@ satisfied.
 
 ---
 
-## 10. v0.83 Release Notes (Scar / Memory persistence) — PREPARED, NOT PUBLISHED
+## 10. v0.83 Release Notes (Scar / Memory persistence) — PUBLISHED
 
-Status document only for this section too — no tag has been created and
-nothing has been pushed for v0.83. This repo has no dedicated
-`CHANGELOG.md`; the existing convention is release notes recorded here in
-`RELEASE.md`, so this entry follows that convention rather than
-introducing a new file.
+Status document only for this section too — but unlike the earlier draft
+text, v0.83 was in fact tagged and pushed publicly. The remote repository
+currently advertises `v0.83` at commit `621a2428152c4ac105f7dccc541c623445d6f873`
+(verified during the v0.84 release gate with `git ls-remote --tags origin`).
+This repo has no dedicated `CHANGELOG.md`; the existing convention is
+release notes recorded here in `RELEASE.md`, so this entry follows that
+convention rather than introducing a new file.
 
 ### What changed since v0.82
 
@@ -242,16 +244,94 @@ introducing a new file.
   the existing protocol-versioning rule (only bump on real protocol
   changes).
 
-### Not done in this pass (release boundary, awaiting operator authorization)
+### Publication status
 
-- `[ ]` Create annotated tag `v0.83` — explicitly withheld this pass.
-- `[ ]` Push `v0.83` to the public repository — explicitly withheld this
-  pass.
-- `[ ]` Any claim that `v0.83` is public — none made; `v0.82` remains the
-  only public release.
-- **Status:** `[x]` Code, tests, documentation, referee enforcement,
-  version bump, and release notes are complete and verified for this
-  pass. `[ ]` Tag and publish remain intentionally undone, pending
-  explicit operator authorization in a future turn.
+- `[x]` Annotated tag `v0.83` exists on the public remote.
+- `[x]` `v0.83` is pushed to the public repository.
+- `[x]` `v0.83` is publicly reachable alongside `v0.82`.
+- **Status:** `[x]` v0.83 is public. The earlier "not published" wording
+  in this file was stale and has been corrected as part of the v0.84
+  release gate.
+
+---
+
+## 11. v0.84 Release Notes (Orchestration / Compass / Compression / MCP / Receiver readiness)
+
+Status document for the v0.84 public release.
+
+### What changed since v0.83
+
+- **Orchestration lifecycle added.** `src/lantern/orchestration.py`
+  introduces `CapabilityRegistry`, `VerificationPolicy`, scoped
+  `DelegationRecord`, `ProvenanceTag`, `SelfChangeProposal`, and a
+  conservative `OrchestrationPlanner` that never upgrades authority by
+  implication.
+- **Contact ledger added.** `src/lantern/contact_ledger.py` introduces an
+  evidence-backed contact-state ladder that distinguishes path found,
+  sent, reachable, received, acknowledged, identity verified, and
+  collaboration authorized without inferring missing steps.
+- **Compass added.** `src/lantern/compass.py` provides a read-only
+  orientation layer over evidence, scars, delegation state, capability
+  decisions, and contact attempts to answer WHAT matters / WHY / WHAT is
+  allowed / WHAT is next.
+- **Compression added.** `src/lantern/compression.py` validates and
+  condenses meaningful outcomes into existing `Scar` shapes while refusing
+  semantic collapse such as RETURNED→VERIFIED without independent
+  verification.
+- **Live MCP boundary added.** `src/lantern/mcp_client.py` isolates all
+  third-party `mcp` SDK imports to one module and implements a bounded
+  stdio client. `src/lantern/mcp_integration.py` connects MCP discovery →
+  registry → Compass/orchestration → execution → provenance → verification,
+  without treating discovery or tool success as authorization.
+- **Receiver readiness added.** `src/lantern/receiver_readiness.py`
+  explicitly documents and runs the already-existing inbound sequence
+  `JOIN_REQUESTED → COMPATIBILITY → IDENTITY → AUTHORIZATION → VERIFIED PEER`
+  using existing modules only, with honest stop points and no new trust
+  path.
+- **Public package surface updated.** `src/lantern/__init__.py` now
+  re-exports the v0.84 modules above for public consumers.
+- **Permanent tests added.** New pytest coverage proves the orchestration,
+  contact-ledger, compass, compression, MCP integration/live stdio/full
+  cycle/generalization, and receiver-readiness behavior. Full suite at the
+  v0.84 release gate: **698 passed, 0 failed**.
+- **Fresh-clone test dependency gap closed.** `pyproject.toml`'s `dev`
+  extras now include the service-test dependencies (`fastapi`, `uvicorn`,
+  `x402`, `httpx`) so a stranger installing `.[dev,mcp]` in a clean clone
+  can actually collect and run the full suite, rather than relying on
+  environment leakage from a previously-prepared workstation.
+
+### Files changed for this pass
+
+`pyproject.toml`, `src/lantern/__init__.py`, `src/lantern/orchestration.py`,
+`src/lantern/contact_ledger.py`, `src/lantern/compass.py`,
+`src/lantern/compression.py`, `src/lantern/mcp_client.py`,
+`src/lantern/mcp_integration.py`, `src/lantern/receiver_readiness.py`,
+`tests/test_lantern_orchestration.py`, `tests/test_lantern_contact_ledger.py`,
+`tests/test_lantern_compass.py`, `tests/test_lantern_compression.py`,
+`tests/test_lantern_mcp_integration.py`, `tests/test_lantern_mcp_live_stdio.py`,
+`tests/test_lantern_mcp_full_cycle.py`,
+`tests/test_lantern_mcp_generalization.py`,
+`tests/test_lantern_receiver_readiness.py`, `MODULE_INVENTORY.md`,
+`RELEASE.md`.
+
+### Version
+
+- **Version strings bumped:** `pyproject.toml` (`version = "0.84"`) and
+  `src/lantern/__init__.py` (`__version__ = "0.84"`) now read `0.84`.
+- **Protocol version unchanged:** `PROTOCOL_VERSION` in
+  `src/lantern/protocol.py` remains `"0.82"` — v0.84 adds orchestration,
+  orientation, MCP, and receiver-readiness layers but does not change the
+  wire-message format itself.
+
+### Release gate for this pass
+
+- `[x]` Full test suite passed (`698 passed, 0 failed`).
+- `[x]` Version consistency checked (`pyproject.toml` and `__init__.py`).
+- `[x]` Public documentation present (`README.md`, `EXTERNAL_BOOTSTRAP.md`).
+- `[x]` Module inventory header refreshed for the current tested baseline.
+- `[x]` No private workspace files are inside the repo root.
+- `[x]` No secrets/credentials found in the intended release files.
+- `[x]` Intended release scope limited to the seven new modules, their
+  tests, and release metadata/docs.
 
 
