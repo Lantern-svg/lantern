@@ -1,0 +1,14 @@
+{
+  "platforms": {},
+  "agents_discovered": 0,
+  "relevant_agents": 0,
+  "introductions": 0,
+  "responses": 0,
+  "capability_requests": 0,
+  "payment_attempts": 0,
+  "successful_payments": 0,
+  "completed_reconciliations": 0,
+  "repeat_usage": 0,
+  "revenue_generated": 0,
+  "contacts": []
+}

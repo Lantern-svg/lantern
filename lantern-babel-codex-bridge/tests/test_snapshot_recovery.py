@@ -9,7 +9,134 @@ Verifies:
 - Lantern.startup() uses snapshot-first fast recovery
 """
 
+from pathlib import Path
+import json
+
+import pytest
+
 from lantern.core import Lantern, EvidenceKernel, Chronicle
+
+
+def _snapshot_lantern(tmp_path):
+    return Lantern(chronicle_filename=tmp_path / "events.jsonl")
+
+
+def test_snapshot_persistence_returns_path_and_exact_content(tmp_path):
+    lantern = _snapshot_lantern(tmp_path)
+    path = tmp_path / "snapshot.json"
+
+    returned = lantern.save_snapshot(path)
+
+    assert returned == path
+    expected = json.dumps(
+        lantern.kernel.snapshot(chronicle_chain=lantern.bus.chronicle.chain),
+        sort_keys=True,
+    )
+    assert path.read_text(encoding="utf-8") == expected
+    assert lantern.load_snapshot(path) == json.loads(expected)
+
+
+def test_snapshot_failure_before_replacement_preserves_existing_snapshot(tmp_path, monkeypatch):
+    lantern = _snapshot_lantern(tmp_path)
+    path = tmp_path / "snapshot.json"
+    path.write_text("previous", encoding="utf-8")
+
+    def fail_stage(*args, **kwargs):
+        raise OSError("stage failed")
+
+    monkeypatch.setattr("lantern.core.tempfile.NamedTemporaryFile", fail_stage)
+
+    with pytest.raises(OSError, match="stage failed"):
+        lantern.save_snapshot(path)
+
+    assert path.read_text(encoding="utf-8") == "previous"
+
+
+def test_snapshot_replace_failure_preserves_existing_snapshot(tmp_path, monkeypatch):
+    lantern = _snapshot_lantern(tmp_path)
+    path = tmp_path / "snapshot.json"
+    path.write_text("previous", encoding="utf-8")
+
+    def fail_replace(source, target):
+        if Path(target) == path:
+            raise OSError("replace failed")
+        return Path(source).rename(target)
+
+    monkeypatch.setattr("lantern.core.os.replace", fail_replace)
+
+    with pytest.raises(OSError, match="replace failed"):
+        lantern.save_snapshot(path)
+
+    assert path.read_text(encoding="utf-8") == "previous"
+
+
+def test_snapshot_verification_failure_does_not_report_success(tmp_path, monkeypatch):
+    lantern = _snapshot_lantern(tmp_path)
+    path = tmp_path / "snapshot.json"
+    original_read_text = Path.read_text
+
+    def mismatched_read_text(self, *args, **kwargs):
+        if self == path:
+            return "different"
+        return original_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", mismatched_read_text)
+
+    with pytest.raises(OSError, match="final content verification failed"):
+        lantern.save_snapshot(path)
+
+    assert not path.exists()
+
+
+def test_snapshot_verification_failure_restores_previous_snapshot(tmp_path, monkeypatch):
+    lantern = _snapshot_lantern(tmp_path)
+    path = tmp_path / "snapshot.json"
+    previous = b"previous"
+    path.write_bytes(previous)
+    original_read_text = Path.read_text
+
+    def mismatched_read_text(self, *args, **kwargs):
+        if self == path:
+            return "different"
+        return original_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", mismatched_read_text)
+
+    with pytest.raises(OSError, match="final content verification failed"):
+        lantern.save_snapshot(path)
+
+    assert path.read_bytes() == previous
+
+
+def test_snapshot_failure_without_previous_file_leaves_no_artifact(tmp_path, monkeypatch):
+    lantern = _snapshot_lantern(tmp_path)
+    path = tmp_path / "snapshot.json"
+
+    def fail_replace(source, target):
+        raise OSError("replace failed")
+
+    monkeypatch.setattr("lantern.core.os.replace", fail_replace)
+
+    with pytest.raises(OSError, match="replace failed"):
+        lantern.save_snapshot(path)
+
+    assert not path.exists()
+    assert not list(tmp_path.glob(".snapshot.json.*.tmp"))
+
+
+def test_snapshot_serialization_failure_preserves_existing_snapshot(tmp_path, monkeypatch):
+    lantern = _snapshot_lantern(tmp_path)
+    path = tmp_path / "snapshot.json"
+    path.write_text("previous", encoding="utf-8")
+
+    monkeypatch.setattr("lantern.core.json.dumps", lambda *args, **kwargs: (_ for _ in ()).throw(
+        TypeError("serialization failed")
+    ))
+
+    with pytest.raises(TypeError, match="serialization failed"):
+        lantern.save_snapshot(path)
+
+    assert path.read_text(encoding="utf-8") == "previous"
 
 
 def test_kernel_snapshot_restore_roundtrip():

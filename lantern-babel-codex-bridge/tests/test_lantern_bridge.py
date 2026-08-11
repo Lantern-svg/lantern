@@ -14,7 +14,7 @@ if each module's own unit tests pass in isolation.
 
 from lantern.core import Lantern
 from lantern.agent import LanternAgent
-from lantern.bridge import LanternAgentBridge, BridgeResult
+from lantern.bridge import LanternAgentBridge, BridgeResult, LOCAL_DEFAULT_RELIABILITY
 from lantern.protocol import create_observation_share, create_evidence_request, create_codex_update
 
 
@@ -25,6 +25,12 @@ def make_bridge():
 
 
 def test_observation_share_creates_real_observation():
+    """v0.93: a remote-declared reliability is a CLAIM, never the
+    Observation's trusted reliability. It is preserved verbatim in
+    metadata["claimed_reliability"] for provenance, but the trusted
+    reliability always resolves to the local default (see
+    bridge.LOCAL_DEFAULT_RELIABILITY), regardless of what the peer sent.
+    """
     bridge, agent = make_bridge()
     compat = bridge.connect("0.82", {"evidence_exchange": True})
 
@@ -43,10 +49,11 @@ def test_observation_share_creates_real_observation():
     obs = next(iter(agent.lantern.kernel.observations.values()))
     assert obs.content == "sky is blue"
     assert obs.source == "peer_a"
-    assert obs.reliability == 0.9
+    assert obs.reliability == LOCAL_DEFAULT_RELIABILITY
+    assert obs.metadata["claimed_reliability"] == 0.9
 
 
-def test_observation_share_defaults_reliability_when_absent():
+def test_observation_share_defaults_claimed_reliability_when_absent():
     bridge, agent = make_bridge()
     compat = bridge.connect("0.82", {"evidence_exchange": True})
 
@@ -56,7 +63,34 @@ def test_observation_share_defaults_reliability_when_absent():
 
     assert result.accepted is True
     obs = next(iter(agent.lantern.kernel.observations.values()))
-    assert obs.reliability == 1.0
+    assert obs.reliability == LOCAL_DEFAULT_RELIABILITY
+    assert obs.metadata["claimed_reliability"] == 1.0
+
+
+def test_higher_claimed_reliability_does_not_increase_trusted_reliability():
+    """Direct proof that a malicious peer cannot raise its own epistemic
+    influence merely by declaring a higher reliability value: the two
+    cases below differ only in the claimed field, and must produce an
+    identical trusted Observation.reliability.
+    """
+    bridge, agent = make_bridge()
+    compat = bridge.connect("0.82", {"evidence_exchange": True})
+
+    low = bridge.receive(
+        create_observation_share("peer_a", {"content": "claim", "reliability": 0.01}),
+        compat,
+    )
+    high = bridge.receive(
+        create_observation_share("peer_a", {"content": "claim", "reliability": 999.0}),
+        compat,
+    )
+
+    obs_low = agent.lantern.kernel.observations[low.data["observation"].id]
+    obs_high = agent.lantern.kernel.observations[high.data["observation"].id]
+
+    assert obs_low.reliability == obs_high.reliability == LOCAL_DEFAULT_RELIABILITY
+    assert obs_low.metadata["claimed_reliability"] == 0.01
+    assert obs_high.metadata["claimed_reliability"] == 999.0
 
 
 def test_evidence_request_returns_belief():

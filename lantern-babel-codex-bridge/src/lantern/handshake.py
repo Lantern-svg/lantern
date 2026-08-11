@@ -80,13 +80,29 @@ def create_handshake(capabilities=None):
 # Compatibility Check
 # ============================================================
 
-def evaluate_handshake(request: HandshakeRequest, supported_capabilities=None):
+def evaluate_handshake(request: HandshakeRequest, supported_capabilities=None, responder_node_id=None):
+    """Evaluate a peer's HandshakeRequest and build this node's response.
+
+    responder_node_id: this node's own configured node_id, echoed back on
+    the response exactly as-is. Prior to this parameter, every response
+    generated a fresh uuid4() per call -- meaning the same physical node
+    appeared to claim a different node_id on every handshake response,
+    which is inconsistent with node_id being a stable identifier and
+    breaks any attempt to bind identity to node_id downstream (see
+    lantern.identity). Defaulting to None preserves the old standalone
+    behavior (fresh uuid4()) for any caller that does not yet have a
+    configured node_id to pass -- this keeps the function usable without
+    forcing every existing call site to change, while every call site that
+    represents a real, running node should pass its real node_id.
+    """
     if supported_capabilities is None:
         supported_capabilities = DEFAULT_CAPABILITIES.copy()
 
+    response_node_id = responder_node_id if responder_node_id is not None else str(uuid.uuid4())
+
     if not compatible_versions(PROTOCOL_VERSION, request.protocol_version):
         return HandshakeResponse(
-            node_id=str(uuid.uuid4()),
+            node_id=response_node_id,
             accepted=False,
             protocol_version=PROTOCOL_VERSION,
             shared_capabilities={},
@@ -101,7 +117,7 @@ def evaluate_handshake(request: HandshakeRequest, supported_capabilities=None):
             shared[capability] = True
 
     return HandshakeResponse(
-        node_id=str(uuid.uuid4()),
+        node_id=response_node_id,
         accepted=True,
         protocol_version=PROTOCOL_VERSION,
         shared_capabilities=shared,

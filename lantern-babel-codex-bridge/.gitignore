@@ -2,7 +2,10 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .venv/
+.venv*/
 *.egg-info/
+build/
+dist/
 
 # Runtime Chronicle/snapshot artifacts (not source)
 chronicle*.jsonl

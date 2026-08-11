@@ -4,19 +4,23 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "lantern"
-version = "0.82"
+version = "0.83"
 description = "Lantern Babel Codex Bridge: an auditable evidence/belief kernel with contradiction tracking and an inter-instance exchange protocol."
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "UNLICENSED" }
+license = { text = "MIT" }
 authors = [
     { name = "Lantern project" },
+]
+dependencies = [
+    "PyNaCl>=1.5.0",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=7.0",
     "pytest-asyncio>=1.4.0",
+    "cryptography>=42.0.0",
 ]
 service = [
     "fastapi>=0.100.0",

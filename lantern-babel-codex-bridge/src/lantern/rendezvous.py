@@ -167,11 +167,37 @@ class JoinMonitor:
                 self._append("JOIN_DUPLICATE", existing, existing.status)
             return existing, False, None
 
-        self.requests[request.request_id] = request
+        # Write to the durable Chronicle BEFORE updating in-memory state.
+        # If the write fails (e.g. OSError from a full disk), _append()
+        # raises and propagates -- self.requests must never contain an
+        # entry the Chronicle does not also contain, or in-memory state
+        # would silently diverge from persisted state on a failed write
+        # (see PRINCIPLE 1/2: a claim of "pending" must not outrun what
+        # was actually written).
         self._append("JOIN_REQUESTED", request, AWAITING_HANDSHAKE)
+        self.requests[request.request_id] = request
         notification = self.notification(request)
         self.notifications.append(notification)
         return request, True, notification
+
+    def verify_persisted(self, request_id: str) -> bool:
+        """Independently confirm a request was durably written.
+
+        submit() returning without raising only proves that
+        Chronicle.append() completed one in-process write call; it does
+        not, by itself, prove the record is durably retrievable. This
+        re-reads storage via chronicle.replay() (which parses the file
+        on disk, not self.requests) rather than trusting the in-memory
+        cache -- the distinction between "a write call returned" and
+        "an independent read confirms the write" (see PRINCIPLE 1/2:
+        claim vs. persisted-and-verified state).
+        """
+        for record in self.chronicle.replay() or []:
+            if record.get("type") not in {"JOIN_REQUESTED", "JOIN_DUPLICATE", "JOIN_EXPIRED"}:
+                continue
+            if record.get("payload", {}).get("request_id") == request_id:
+                return True
+        return False
 
     def pending(self) -> list[JoinRequest]:
         self.expire()

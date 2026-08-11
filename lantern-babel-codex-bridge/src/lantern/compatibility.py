@@ -54,6 +54,13 @@ DEFAULT_CAPABILITIES = {
     "contradiction_tracking": True,
     "snapshot_exchange": True,
     "handshake": True,
+    # Disabled by default: a node only advertises this once it has a
+    # real lantern.identity.NodeIdentity loaded (private key generated
+    # and persisted). Negotiating this capability is purely an
+    # "I support challenge/response identity proof" signal -- it never
+    # by itself changes trust_status or authority_level. See
+    # lantern.identity module docstring.
+    "identity_proof": False,
 }
 
 

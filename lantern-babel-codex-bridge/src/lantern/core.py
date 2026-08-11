@@ -18,6 +18,9 @@ Design laws:
 - Resolution records a judgment (a ResolutionEvent) about a contradiction.
   It does not edit or remove Evidence, and it does not directly change
   belief. Only new Evidence changes belief.
+- Scars are durable consequence records of meaningful outcomes; they are
+  persisted via the same append-only Chronicle and replayed on startup, but
+  they do not automatically mutate belief or Codex state.
 - Modules communicate only through events on the EventBus; they do not
   call into each other directly.
 - The audit chain is an append-only hash chain over published events.
@@ -30,33 +33,28 @@ Known open items (see ARCHITECTURE.md):
   observation frequency needs to be decoupled from decay rate.
 - Concept relationships / the full Codex semantic graph are out of scope
   for this file; this file covers Observation, Evidence, Belief,
-  Contradiction, Resolution, and the event shell only.
+  Contradiction, Resolution, Scar persistence, and the event shell only.
 - Persistence: Chronicle is an append-only, hash-chained event log.
   Recovery uses "event stream + periodic snapshot" for fast
   deterministic recovery:
     - Lantern.save_snapshot() serializes full EvidenceKernel state
-      (observations/evidence/contradictions/resolutions) tagged with
+      (observations/evidence/contradictions/resolutions/scars) tagged with
       the Chronicle chain position at that moment.
     - Lantern.startup() restores the latest snapshot, then replays
       only Chronicle records after that chain position -- not the
       full history from GENESIS.
     - Event payloads (OBSERVATION_CREATED, EVIDENCE_CREATED,
-      CONTRADICTION_RESOLVED) carry full reconstruction fields, so
-      post-snapshot events rebuild kernel state exactly, not just
-      module/audit-chain history.
+      CONTRADICTION_RESOLVED, SCAR_RECORDED) carry full reconstruction
+      fields, so post-snapshot events rebuild runtime state exactly,
+      not just module/audit-chain history.
     - CONTRADICTION_DETECTED and BELIEF_UPDATED are NOT replayed
       directly during recovery -- they're pure functions of
       observations+evidence, so replaying EVIDENCE_CREATED already
       recomputes them via detect_contradiction().
     - If no snapshot exists yet, startup() falls back to a full
-      Chronicle replay, which still fully reconstructs kernel state
+      Chronicle replay, which still fully reconstructs runtime state
       (from GENESIS) since payloads are self-sufficient -- it's just
       slower than the snapshot-bounded path.
-    - Caveat: this reconstruction relies on today's payload shape.
-      A Chronicle file written by an older version of this file (with
-      summary-only payloads) will only rehydrate modules/audit chain
-      on replay, not kernel state -- there's no schema versioning yet
-      to detect and handle that case explicitly.
 """
 
 from dataclasses import dataclass, field
@@ -65,8 +63,12 @@ from pathlib import Path
 import hashlib
 import json
 import math
+import os
+import tempfile
 import uuid
 from typing import Optional
+
+from .scars import Scar, ScarRecord, create_scar as build_scar_record, persisted_record
 
 
 # ==================================================
@@ -130,9 +132,43 @@ class Chronicle:
             **body,
         }
 
-        with self.path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(record, sort_keys=True))
-            handle.write("\n")
+        serialized = json.dumps(record, sort_keys=True)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        staged = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                dir=self.path.parent,
+                prefix=f".{self.path.name}.",
+                suffix=".tmp",
+                delete=False,
+            ) as handle:
+                staged = Path(handle.name)
+                if self.path.exists():
+                    with self.path.open(encoding="utf-8") as existing:
+                        handle.write(existing.read())
+                handle.write(serialized)
+                handle.write("\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+
+            with staged.open(encoding="utf-8") as verify_handle:
+                lines = [line for line in verify_handle if line.strip()]
+            if not lines or lines[-1].strip() != serialized:
+                raise OSError("chronicle staging verification failed")
+
+            os.replace(staged, self.path)
+            staged = None
+
+            with self.path.open(encoding="utf-8") as verify_handle:
+                persisted_lines = [line for line in verify_handle if line.strip()]
+            if not persisted_lines or persisted_lines[-1].strip() != serialized:
+                raise OSError("chronicle final content verification failed")
+        except BaseException:
+            if staged is not None:
+                staged.unlink(missing_ok=True)
+            raise
 
         self.chain = digest
 
@@ -189,23 +225,7 @@ class Chronicle:
 
         self.chain = previous
 
-    # ---------------------
-    # Snapshot support
-    # ---------------------
-    #
-    # A snapshot captures full EvidenceKernel state at a point in time,
-    # tagged with the Chronicle chain hash at that moment. Recovery can
-    # then load the snapshot and replay only the Chronicle records
-    # AFTER that chain hash, instead of replaying from GENESIS.
-
     def records_after(self, chain_hash):
-        """Yield Chronicle records strictly after the given chain hash.
-
-        If chain_hash is "GENESIS" (or not found), yields every record
-        (equivalent to a full replay). Records are returned in file
-        order; the boundary record itself (whose current_hash equals
-        chain_hash) is excluded.
-        """
         if chain_hash == "GENESIS":
             yield from self.replay()
             return
@@ -218,9 +238,6 @@ class Chronicle:
                 found = True
 
         if not found:
-            # Snapshot's chain position isn't in this Chronicle file
-            # (e.g. Chronicle was reset/rotated) -- fail safe by
-            # replaying everything rather than silently skipping data.
             yield from self.replay()
 
 
@@ -285,19 +302,11 @@ class EvidenceKernel:
         self.contradictions = []
         self.resolutions = []
 
-    # ---------------------
-    # Observation
-    # ---------------------
-
     def observe(self, content, source, reliability, metadata=None):
         self.step += 1
         obs = Observation(content, source, reliability, self.step, metadata=metadata or {})
         self.observations[obs.id] = obs
         return obs
-
-    # ---------------------
-    # Evidence
-    # ---------------------
 
     def add_evidence(self, concept, observation_id, weight, sign):
         obs = self.observations[observation_id]
@@ -312,10 +321,6 @@ class EvidenceKernel:
         contradiction = self.detect_contradiction(concept)
         return evidence, contradiction
 
-    # ---------------------
-    # Belief
-    # ---------------------
-
     def belief(self, concept, at_step=None):
         if at_step is None:
             at_step = self.step
@@ -329,10 +334,6 @@ class EvidenceKernel:
 
     def sigmoid(self, value):
         return 1 / (1 + math.exp(-value))
-
-    # ---------------------
-    # Contradictions
-    # ---------------------
 
     def latest_contradiction(self, concept):
         matches = [c for c in self.contradictions if c.concept == concept]
@@ -367,14 +368,10 @@ class EvidenceKernel:
 
         latest = self.latest_contradiction(concept)
 
-        # Same evidence state already recorded.
-        # Update severity in place, preserve history.
         if latest and latest.evidence_snapshot == snapshot:
             latest.current_severity = self.contradiction_severity(concept)
             return latest
 
-        # New contradiction state: thread it onto history rather than
-        # silently duplicating or overwriting.
         contradiction = Contradiction(
             concept,
             snapshot,
@@ -390,10 +387,6 @@ class EvidenceKernel:
         self.contradictions.append(contradiction)
 
         return contradiction
-
-    # ---------------------
-    # Resolution
-    # ---------------------
 
     def resolve(self, contradiction_id, decision, reasoning, confidence):
         contradiction = next(
@@ -419,25 +412,7 @@ class EvidenceKernel:
 
         return resolution
 
-    # ---------------------
-    # Snapshot / Restore
-    # ---------------------
-    #
-    # Full, exact serialization of kernel state, independent of the
-    # event log. Paired with Chronicle (below) for fast deterministic
-    # recovery: restore the latest snapshot, then only replay events
-    # that occurred after that snapshot's `chronicle_chain` position,
-    # instead of replaying the entire event history from GENESIS.
-
-    def snapshot(self, chronicle_chain="GENESIS"):
-        """Serialize complete kernel state to a plain dict.
-
-        chronicle_chain: the Chronicle.chain value (hash) at the moment
-        this snapshot was taken. Recovery uses this to know which
-        Chronicle records (if any) come after the snapshot and still
-        need to be replayed into the bus/modules. It has no bearing on
-        kernel state itself, which this snapshot fully captures.
-        """
+    def snapshot(self, chronicle_chain="GENESIS", scars=None):
         return {
             "chronicle_chain": chronicle_chain,
             "step": self.step,
@@ -447,17 +422,11 @@ class EvidenceKernel:
             "evidence": [vars(e) for e in self.evidence],
             "contradictions": [vars(c) for c in self.contradictions],
             "resolutions": [vars(r) for r in self.resolutions],
+            "scars": [scar.to_dict() for scar in (scars or [])],
         }
 
     @classmethod
     def restore(cls, snapshot):
-        """Rebuild a kernel exactly from a dict produced by snapshot().
-
-        This does not replay events and does not touch the audit
-        chain. It reconstructs EvidenceKernel state directly, which is
-        the piece Chronicle replay alone cannot do (see module
-        docstring).
-        """
         kernel = cls()
         kernel.step = snapshot["step"]
         kernel.observations = {
@@ -566,6 +535,7 @@ class Lantern:
 
     def __init__(self, chronicle_filename=None):
         self.kernel = EvidenceKernel()
+        self.scars = {}
         chronicle = None
         if chronicle_filename is not None:
             chronicle = Chronicle(chronicle_filename)
@@ -578,22 +548,67 @@ class Lantern:
         return Path(str(chronicle_filename) + ".snapshot.json")
 
     def save_snapshot(self, path=None):
-        """Persist current kernel state + the Chronicle chain position
-        it corresponds to. Call periodically (e.g. every N events, or
-        on a timer) -- not required for correctness (Chronicle alone
-        is durable), but makes startup() fast by bounding how much of
-        the event log needs replaying.
-        """
         if path is None:
             if self.bus.chronicle is None:
                 raise ValueError("No chronicle attached; pass an explicit path.")
             path = self.snapshot_path(self.bus.chronicle.path)
 
         snapshot = self.kernel.snapshot(
-            chronicle_chain=self.bus.chronicle.chain if self.bus.chronicle else "GENESIS"
+            chronicle_chain=self.bus.chronicle.chain if self.bus.chronicle else "GENESIS",
+            scars=list(self.scars.values()),
         )
+        serialized = json.dumps(snapshot, sort_keys=True)
+        target = Path(path)
+        target.parent.mkdir(parents=True, exist_ok=True)
 
-        Path(path).write_text(json.dumps(snapshot, sort_keys=True), encoding="utf-8")
+        previous = None
+        had_previous = target.exists()
+        if had_previous:
+            previous = target.read_bytes()
+
+        staged = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                dir=target.parent,
+                prefix=f".{target.name}.",
+                suffix=".tmp",
+                delete=False,
+            ) as handle:
+                staged = Path(handle.name)
+                handle.write(serialized)
+                handle.flush()
+                os.fsync(handle.fileno())
+
+            if staged.read_text(encoding="utf-8") != serialized:
+                raise OSError("snapshot staging verification failed")
+
+            os.replace(staged, target)
+            staged = None
+
+            persisted = target.read_text(encoding="utf-8")
+            if persisted != serialized:
+                raise OSError("snapshot final content verification failed")
+        except BaseException:
+            if staged is not None:
+                staged.unlink(missing_ok=True)
+            try:
+                if had_previous:
+                    restore = target.parent / f".{target.name}.restore"
+                    with restore.open("wb") as handle:
+                        handle.write(previous)
+                        handle.flush()
+                        os.fsync(handle.fileno())
+                    os.replace(restore, target)
+                    if target.read_bytes() != previous:
+                        raise OSError("snapshot restoration verification failed")
+                else:
+                    target.unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise
+
         return path
 
     def load_snapshot(self, path=None):
@@ -609,19 +624,6 @@ class Lantern:
         return json.loads(path.read_text(encoding="utf-8"))
 
     def startup(self, snapshot_path=None):
-        """Fast deterministic recovery: restore the latest kernel
-        snapshot (if any), verify the Chronicle, then replay only the
-        Chronicle records after the snapshot's chain position into the
-        bus/modules AND the kernel -- not the full event history from
-        GENESIS.
-
-        If no snapshot exists, falls back to a full Chronicle replay.
-        Kernel state is rebuilt from event payloads (OBSERVATION_
-        CREATED, EVIDENCE_CREATED, CONTRADICTION_RESOLVED carry full
-        reconstruction fields); CONTRADICTION_DETECTED/BELIEF_UPDATED
-        are recomputed rather than replayed, since they are pure
-        functions of the evidence already applied.
-        """
         if self.bus.chronicle is None:
             return
 
@@ -632,6 +634,10 @@ class Lantern:
 
         if snapshot is not None:
             self.kernel = EvidenceKernel.restore(snapshot)
+            self.scars = {
+                scar_data["id"]: Scar.from_dict(scar_data)
+                for scar_data in snapshot.get("scars", [])
+            }
             pending = self.bus.chronicle.records_after(snapshot["chronicle_chain"])
         else:
             pending = self.bus.chronicle.replay()
@@ -647,11 +653,6 @@ class Lantern:
             self.bus.replay_publish(event)
 
     def _apply_to_kernel(self, event):
-        """Reconstruct kernel state from a historical event during
-        replay. Appends already-validated historical records directly
-        (does not call observe()/add_evidence(), which would advance
-        self.kernel.step again and double-count evidence).
-        """
         payload = event.payload
 
         if event.event_type == "OBSERVATION_CREATED":
@@ -677,8 +678,6 @@ class Lantern:
             )
             self.kernel.evidence.append(evidence)
             self.kernel.step = max(self.kernel.step, evidence.step)
-            # Recompute contradiction state exactly as add_evidence()
-            # would have, so history threading matches live behavior.
             self.kernel.detect_contradiction(evidence.concept)
 
         elif event.event_type == "CONTRADICTION_RESOLVED":
@@ -701,11 +700,12 @@ class Lantern:
                     id=payload["id"],
                 ))
 
-        # CONTRADICTION_DETECTED and BELIEF_UPDATED are intentionally
-        # not replayed directly: they are derived, recomputable facts
-        # (detect_contradiction()/belief() are pure functions of
-        # observations+evidence already applied above). Replaying
-        # EVIDENCE_CREATED already re-runs detect_contradiction().
+        elif event.event_type == "SCAR_RECORDED":
+            scar = Scar.from_dict(payload)
+            self.scars[scar.id] = scar
+
+    def _apply_to_runtime(self, event):
+        self._apply_to_kernel(event)
 
     def observe(self, content, source, reliability, metadata=None):
         obs = self.kernel.observe(content, source, reliability, metadata)
@@ -783,10 +783,48 @@ class Lantern:
 
         return resolution
 
+    def create_scar(self, **kwargs) -> ScarRecord:
+        return build_scar_record(**kwargs)
 
-# ==================================================
-# Verification
-# ==================================================
+    def persist_scar(self, record: ScarRecord) -> ScarRecord:
+        if self.bus.chronicle is None:
+            raise ValueError("No chronicle attached; cannot persist scar")
+
+        scar = record.scar
+        self.bus.publish(KernelEvent(
+            "SCAR_RECORDED",
+            scar.source,
+            scar.to_dict(),
+            id=scar.id,
+            timestamp=scar.timestamp,
+        ))
+        self.scars[scar.id] = scar
+        verified = self.bus.chronicle.verify() and scar.id in self.scars
+        return persisted_record(scar, verified=verified)
+
+    def load_scar(self, scar_id: str) -> Optional[ScarRecord]:
+        scar = self.scars.get(scar_id)
+        if scar is None:
+            return None
+        return ScarRecord(
+            scar=scar,
+            constructed=True,
+            persisted=True,
+            verified=self.bus.chronicle.verify() if self.bus.chronicle is not None else False,
+            replayed=False,
+        )
+
+    def replay_scars(self):
+        return [
+            ScarRecord(scar=scar, constructed=True, persisted=True, verified=True, replayed=True)
+            for scar in self.scars.values()
+        ]
+
+    def verify_scar(self, scar_id: str) -> bool:
+        if self.bus.chronicle is None:
+            return False
+        return self.bus.chronicle.verify() and scar_id in self.scars
+
 
 if __name__ == "__main__":
     lantern = Lantern()
@@ -810,16 +848,3 @@ if __name__ == "__main__":
     print("Contradiction:", contradiction.status)
     print("Codex events:", len(lantern.modules[1].events))
     print("Audit:", lantern.bus.chain)
-
-    # third, supporting evidence on an already-resolved concept:
-    # should thread onto history, not duplicate as an unrelated record.
-    c = lantern.observe("Third observation, more support", "lab2", .9)
-    lantern.add_evidence("water_freezing", c.id, 1, 1)
-
-    print("\nContradiction history after new evidence:")
-    for con in lantern.kernel.contradictions:
-        print(
-            " -", con.id[:8], con.status,
-            "supersedes:", (con.supersedes or "")[:8],
-            "superseded_by:", (con.superseded_by or "")[:8]
-        )

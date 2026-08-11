@@ -34,6 +34,18 @@ COMPATIBILITY_STATES = (UNKNOWN, COMPATIBLE, INCOMPATIBLE, REQUIRES_NEGOTIATION)
 TRUST_UNVERIFIED = "unverified"
 AUTHORITY_NONE = "none"
 
+# Identity status is a THIRD, independent axis from trust_status and
+# authority_level -- see lantern.identity module docstring. A
+# CRYPTOGRAPHICALLY_VERIFIED identity_status means a challenge/response
+# proof succeeded; it says nothing about trust_status or
+# authority_level, which remain unconditionally "unverified"/"none" in
+# this module regardless of identity_status. inspect() never performs
+# verification itself (that would violate this module's "never contacts
+# a peer" invariant) -- a caller that already ran lantern.identity
+# verification elsewhere may pass the resulting status in explicitly.
+IDENTITY_UNVERIFIED = "UNVERIFIED"
+IDENTITY_CRYPTOGRAPHICALLY_VERIFIED = "CRYPTOGRAPHICALLY_VERIFIED"
+
 
 def _claimed_compatibility(
     claimed_protocol_version: str | None,
@@ -79,6 +91,7 @@ class ParticipantView:
     trust_status: str
     authority_level: str
     shared_capabilities_if_compatible: list[str]
+    identity_status: str = IDENTITY_UNVERIFIED
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -93,11 +106,19 @@ class ParticipantView:
             "trust_status": self.trust_status,
             "authority_level": self.authority_level,
             "shared_capabilities_if_compatible": list(self.shared_capabilities_if_compatible),
+            "identity_status": self.identity_status,
         }
 
 
-def inspect(request: JoinRequest) -> ParticipantView:
-    """Build a read-only view of one JoinRequest. Never contacts the peer."""
+def inspect(request: JoinRequest, identity_status: str = IDENTITY_UNVERIFIED) -> ParticipantView:
+    """Build a read-only view of one JoinRequest. Never contacts the peer.
+
+    identity_status defaults to IDENTITY_UNVERIFIED and is never computed
+    here -- if a caller already has a lantern.identity.VerificationResult
+    for this participant from a real challenge/response exchange, it may
+    pass identity_status=result.identity_status explicitly. This keeps
+    verification itself entirely outside this read-only module.
+    """
     compatibility_status, shared = _claimed_compatibility(
         request.protocol_version, request.capabilities
     )
@@ -113,6 +134,7 @@ def inspect(request: JoinRequest) -> ParticipantView:
         trust_status=TRUST_UNVERIFIED,
         authority_level=AUTHORITY_NONE,
         shared_capabilities_if_compatible=shared,
+        identity_status=identity_status,
     )
 
 

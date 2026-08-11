@@ -1,10 +1,11 @@
 """
-Lantern Architecture Referee v0.91
+Lantern Architecture Referee v0.92
 
 Purpose:
 - Preserve an independent architectural reference state
 - Inspect the live implementation read-only
 - Detect drift without rewriting live protocol modules\n- Keep CODEX_UPDATE disabled until its trust semantics are defined
+- Ensure Scar persistence exists as a real, replayable component once implemented
 
 This referee describes the architecture.
 It does not mutate runtime behavior.
@@ -18,12 +19,7 @@ import inspect
 import json
 
 
-ARCHITECTURE_VERSION = "0.91"
-
-
-# ============================================================
-# INDEPENDENT ARCHITECTURAL REFERENCE STATE
-# ============================================================
+ARCHITECTURE_VERSION = "0.92"
 
 CANONICAL_CAPABILITIES = {
     "evidence_exchange": True,
@@ -31,31 +27,21 @@ CANONICAL_CAPABILITIES = {
     "contradiction_tracking": True,
     "snapshot_exchange": True,
     "handshake": True,
-
-    # Explicitly disabled.
-    # A remote Codex claim must never directly mutate local belief.
     "codex_update": False,
+    "identity_proof": False,
 }
 
-
-# Keyed by the actual wire message_type strings used by
-# protocol.py / router.py, not by capability name.
 CANONICAL_MESSAGE_REQUIREMENTS = {
     "OBSERVATION_SHARE": "evidence_exchange",
     "EVIDENCE_REQUEST": "belief_query",
     "CODEX_UPDATE": "codex_update",
 }
 
-
 CANONICAL_PROTOCOL_MESSAGE_TYPES = {
     "OBSERVATION_SHARE",
     "EVIDENCE_REQUEST",
     "CODEX_UPDATE",
 }
-
-
-
-
 
 FROZEN_CONSTANTS = {
     "belief_neutral_value": 0.5,
@@ -65,16 +51,11 @@ FROZEN_CONSTANTS = {
     "comparison_confidence_gap": 0.10,
     "resolution_mutates_evidence": False,
     "remote_confidence_mutates_local_belief": False,
-
-    # Continuity watermark (v0.92). The watermark is a read-only view
-    # over already-existing state (EvidenceKernel.step +
-    # Chronicle.chain), not a new persisted mechanism. These two
-    # flags are the trust invariants the referee enforces on it:
-    # a watermark describes position, it never grants authority.
     "watermark_mutates_belief": False,
     "watermark_bypasses_capability_gate": False,
+    "scar_persistence_implemented": True,
+    "scar_auto_mutates_belief": False,
 }
-
 
 MODULES = {
     "core": "Evidence and belief kernel",
@@ -90,36 +71,29 @@ MODULES = {
     "evaluation": "Observation-to-evidence gate",
     "codex_compare": "Perspective comparison",
     "codex_explanation": "Read-only perspective explanation",
+    "scars": "Durable consequence records persisted via Chronicle",
     "architecture": "Independent read-only architecture referee",
 }
-
 
 OPEN_DECISIONS = {
     "custom_message_capabilities":
         "Whether every custom wire message requires explicit capability registration",
-
     "step_vs_wall_clock_decay":
         "Whether decay remains observation-step based",
-
     "architecture_document_sync":
         "Keep ARCHITECTURE.md synchronized with shipped implementation",
-
     "concept_relationship_graph":
         "Explicit semantic relationships between Codex concepts",
-
     "codex_update_trust":
         "How CODEX_UPDATE could ever influence local state",
-
     "watermark_remote_chain_provenance":
         "Remote chain hashes cannot be cryptographically re-derived "
         "locally (no shared ledger between instances); DIVERGED is "
         "currently a structural flag, not a proof of tampering",
+    "scar_to_principle_promotion":
+        "Persisted scars are experience records; when and how they become principles remains explicit future evaluation",
 }
 
-
-# ============================================================
-# RESULT TYPES
-# ============================================================
 
 @dataclass(frozen=True)
 class Finding:
@@ -178,24 +152,15 @@ class ArchitectureReport:
         }
 
 
-# ============================================================
-# REGISTRY / REFEREE
-# ============================================================
-
 class ArchitectureRegistry:
 
     def __init__(self):
-        # Independent reference state. Must not alias live module dicts.
         self.capabilities = dict(CANONICAL_CAPABILITIES)
         self.message_requirements = dict(CANONICAL_MESSAGE_REQUIREMENTS)
         self.protocol_message_types = set(CANONICAL_PROTOCOL_MESSAGE_TYPES)
         self.constants = dict(FROZEN_CONSTANTS)
         self.modules = dict(MODULES)
         self.open_decisions = dict(OPEN_DECISIONS)
-
-    # --------------------------------------------------------
-    # Reference-state helpers
-    # --------------------------------------------------------
 
     def capability_exists(self, name):
         return name in self.capabilities
@@ -229,18 +194,15 @@ class ArchitectureRegistry:
         ).encode("utf-8")
         return hashlib.sha256(encoded).hexdigest()
 
-    # --------------------------------------------------------
-    # Live inspection
-    # --------------------------------------------------------
-
     def inspect_live_system(self):
         from . import compatibility as compatibility_module
         from . import continuity as continuity_module
         from . import federation as federation_module
         from . import protocol as protocol_module
         from . import router as router_module
+        from . import scars as scars_module
         from .codex_compare import compare_beliefs
-        from .core import Evidence, EvidenceKernel
+        from .core import Evidence, EvidenceKernel, Lantern
 
         live_modules = {
             path.stem: path.name
@@ -283,6 +245,8 @@ class ArchitectureRegistry:
             "watermark_bypasses_capability_gate": self._watermark_bypasses_capability_gate(
                 continuity_module
             ),
+            "scar_persistence_implemented": self._scar_persistence_implemented(scars_module),
+            "scar_auto_mutates_belief": self._scar_auto_mutates_belief(scars_module, Lantern),
         }
 
         live_state = {
@@ -317,10 +281,6 @@ class ArchitectureRegistry:
         return "reliability=payload.get(\"confidence\"" in source
 
     def _watermark_mutates_belief(self, continuity_module):
-        # Structural guarantee: none of the continuity module's public
-        # functions may touch belief/evidence/observation mutation
-        # APIs. Checked by source inspection rather than trusting a
-        # docstring claim.
         forbidden = ("add_evidence(", ".belief(", "observe(", "resolve(")
         for name in ("local_watermark", "parse_remote_watermark", "compare_watermarks"):
             source = inspect.getsource(getattr(continuity_module, name))
@@ -329,10 +289,6 @@ class ArchitectureRegistry:
         return False
 
     def _watermark_bypasses_capability_gate(self, continuity_module):
-        # Structural guarantee: compare_watermarks must never itself
-        # decide capability/message-gate outcomes -- it only ever
-        # returns a ContinuityResult, and never imports can_exchange
-        # or router.MESSAGE_REQUIREMENTS.
         module_source = inspect.getsource(continuity_module)
         if "can_exchange" in module_source or "MESSAGE_REQUIREMENTS" in module_source:
             return True
@@ -348,9 +304,14 @@ class ArchitectureRegistry:
             or "add_evidence(" in source
         )
 
-    # --------------------------------------------------------
-    # Drift detection
-    # --------------------------------------------------------
+    def _scar_persistence_implemented(self, scars_module):
+        source = inspect.getsource(scars_module)
+        return "SCAR_RECORDED" in source and "persist_scar" in inspect.getsource(__import__("lantern.core", fromlist=["Lantern"]).Lantern)
+
+    def _scar_auto_mutates_belief(self, scars_module, lantern_cls):
+        scars_source = inspect.getsource(scars_module)
+        lantern_source = inspect.getsource(lantern_cls.persist_scar)
+        return ".belief(" in scars_source or "add_evidence(" in lantern_source
 
     def compare_capabilities(self, live):
         findings = []
@@ -534,31 +495,28 @@ class ArchitectureRegistry:
                 self.capabilities.get("codex_update"),
             ))
 
-        if self.constants.get("remote_confidence_mutates_local_belief") is not False:
-            findings.append(Finding(
-                "ERROR",
-                "trust_invariant",
-                "remote_confidence_mutates_local_belief",
-                False,
-                self.constants.get("remote_confidence_mutates_local_belief"),
-            ))
+        for invariant in (
+            "remote_confidence_mutates_local_belief",
+            "watermark_mutates_belief",
+            "watermark_bypasses_capability_gate",
+            "scar_auto_mutates_belief",
+        ):
+            if self.constants.get(invariant) is not False:
+                findings.append(Finding(
+                    "ERROR",
+                    "trust_invariant",
+                    invariant,
+                    False,
+                    self.constants.get(invariant),
+                ))
 
-        if self.constants.get("watermark_mutates_belief") is not False:
+        if self.constants.get("scar_persistence_implemented") is not True:
             findings.append(Finding(
                 "ERROR",
                 "trust_invariant",
-                "watermark_mutates_belief",
-                False,
-                self.constants.get("watermark_mutates_belief"),
-            ))
-
-        if self.constants.get("watermark_bypasses_capability_gate") is not False:
-            findings.append(Finding(
-                "ERROR",
-                "trust_invariant",
-                "watermark_bypasses_capability_gate",
-                False,
-                self.constants.get("watermark_bypasses_capability_gate"),
+                "scar_persistence_implemented",
+                True,
+                self.constants.get("scar_persistence_implemented"),
             ))
 
         return findings
@@ -575,10 +533,6 @@ class ArchitectureRegistry:
             for name, description in self.open_decisions.items()
         ]
 
-    # --------------------------------------------------------
-    # Full referee pass
-    # --------------------------------------------------------
-
     def validate(self):
         live_state, live_fingerprint = self.inspect_live_system()
 
@@ -590,7 +544,6 @@ class ArchitectureRegistry:
         findings.extend(self.compare_modules(live_state["modules"]))
         findings.extend(self.compare_constants(live_state["constants"]))
 
-        # Structural trust invariants in the live implementation.
         if live_state["capabilities"].get("codex_update") is not False:
             findings.append(Finding(
                 "ERROR",
@@ -600,31 +553,28 @@ class ArchitectureRegistry:
                 live_state["capabilities"].get("codex_update"),
             ))
 
-        if live_state["constants"].get("remote_confidence_mutates_local_belief") is not False:
-            findings.append(Finding(
-                "ERROR",
-                "trust_invariant",
-                "remote_confidence_mutates_local_belief",
-                False,
-                live_state["constants"].get("remote_confidence_mutates_local_belief"),
-            ))
+        for invariant in (
+            "remote_confidence_mutates_local_belief",
+            "watermark_mutates_belief",
+            "watermark_bypasses_capability_gate",
+            "scar_auto_mutates_belief",
+        ):
+            if live_state["constants"].get(invariant) is not False:
+                findings.append(Finding(
+                    "ERROR",
+                    "trust_invariant",
+                    invariant,
+                    False,
+                    live_state["constants"].get(invariant),
+                ))
 
-        if live_state["constants"].get("watermark_mutates_belief") is not False:
+        if live_state["constants"].get("scar_persistence_implemented") is not True:
             findings.append(Finding(
                 "ERROR",
                 "trust_invariant",
-                "watermark_mutates_belief",
-                False,
-                live_state["constants"].get("watermark_mutates_belief"),
-            ))
-
-        if live_state["constants"].get("watermark_bypasses_capability_gate") is not False:
-            findings.append(Finding(
-                "ERROR",
-                "trust_invariant",
-                "watermark_bypasses_capability_gate",
-                False,
-                live_state["constants"].get("watermark_bypasses_capability_gate"),
+                "scar_persistence_implemented",
+                True,
+                live_state["constants"].get("scar_persistence_implemented"),
             ))
 
         findings.extend(self.validate_open_decisions())
@@ -634,10 +584,6 @@ class ArchitectureRegistry:
             reference_fingerprint=self.fingerprint(),
             live_fingerprint=live_fingerprint,
         )
-
-    # --------------------------------------------------------
-    # Snapshot / status
-    # --------------------------------------------------------
 
     def snapshot(self):
         live_state, live_fingerprint = self.inspect_live_system()
@@ -655,10 +601,6 @@ class ArchitectureRegistry:
         }
 
 
-# ============================================================
-# SINGLE REGISTRY INSTANCE
-# ============================================================
-
 REGISTRY = ArchitectureRegistry()
 
 
@@ -673,10 +615,6 @@ def architecture_status():
         "live_fingerprint": report.live_fingerprint,
     }
 
-
-# ============================================================
-# SELF CHECK
-# ============================================================
 
 if __name__ == "__main__":
     print(json.dumps(architecture_status(), indent=2, sort_keys=True))

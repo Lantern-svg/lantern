@@ -2,9 +2,9 @@
 
 Repo root: `/home/ubuntu/.openclaw/workspace/lantern-babel-codex-bridge/`
 Package: `src/lantern/`
-Full test run: `.venv/bin/python -m pytest tests/ -q` → **142 passed, 0 failed** (confirmed by running it; no files were modified).
+Full test run: `.venv/bin/python -m pytest tests/ -q` → **142 passed, 0 failed** (confirmed by running it; no files were modified). This count predates the `scars` module below and several other modules added since (`bootstrap_client`, `bootstrap_node`, `heartbeat`, `joins_cli`, `memory_boundary`, `participants`, `reciprocity`, `rendezvous`); see the individual module sections for their own current test counts. This file has not been fully re-audited module-by-module since those additions — the `scars` entry below was added and verified as part of the Scar-persistence documentation pass; the others remain an open documentation-drift item (see `ARCHITECTURE.md` "Open items before v1").
 
-Package surface note (`__init__.py`, not in the 14 covered below): it does no independent logic. It re-exports selected classes/functions from every other module (`core`, `agent`, `compatibility`, `continuity`, `handshake`, `protocol`, `router`, `boundary`, `architecture`, `bridge`, `codex_compare`, `codex_explanation`, `evaluation`, `federation`) into a flat `lantern.__all__` namespace and sets `__version__ = "0.82"`. It has no dedicated test file and contains no behavior of its own to test.
+Package surface note (`__init__.py`, not in the 14 covered below): it does no independent logic. It re-exports selected classes/functions from every other module (`core`, `agent`, `compatibility`, `continuity`, `handshake`, `protocol`, `router`, `boundary`, `architecture`, `bridge`, `codex_compare`, `codex_explanation`, `evaluation`, `federation`, `scars`) into a flat `lantern.__all__` namespace and sets `__version__ = "0.83"`. It has no dedicated test file and contains no behavior of its own to test.
 
 ---
 
@@ -270,6 +270,37 @@ Package surface note (`__init__.py`, not in the 14 covered below): it does no in
 **Standalone:** Yes at the import level; functionally it's meant to run on the output of `codex_compare` plus the same two `Lantern` instances.
 
 **Standalone API candidate:** Yes — "explain a specific belief divergence in plain language" is a discrete, coherent capability, though it is naturally a companion to `codex_compare` rather than fully independent of it in practice.
+
+---
+
+## scars
+
+**Description:** Implements durable Scar persistence, reusing `core.Chronicle` (the existing append-only, SHA-256 hash-chained log) instead of a second store. A `Scar` is a durable consequence record of a meaningful outcome, contradiction, failure, or success — constructed in memory first (`create_scar()`), then explicitly persisted through `Lantern.persist_scar()` (append to Chronicle, verify, update runtime state). A `ScarRecord` tracks four independent boolean states — `constructed`, `persisted`, `verified`, `replayed` — that are never collapsed into each other: a constructed Scar is not a persisted one, and a persisted Scar is not necessarily replayed until it actually comes back through `Lantern.startup()`. Network-originated scars are additionally gated by `should_record_network_scar()`, which requires both an allowlisted outcome (`NETWORK_SCAR_OUTCOMES`) and an explicit `meaningful=True` from the caller — trivial network traffic never becomes a Scar. `describe_scar_claim()` is preserved from the pre-persistence version of this module: it builds a Scar-shaped dict for conversational/reporting use only and always reports `persisted: False`, since it deliberately never touches Chronicle.
+
+**Public functions/classes:**
+- `Scar` — frozen dataclass: id, timestamp, source, trigger, observation, outcome, severity, lesson (optional), related_contradiction_id (optional), related_evidence_ids (optional), protocol_version, provenance; `to_dict()`/`from_dict()`.
+- `ScarRecord` — frozen dataclass: scar, constructed, persisted, verified, replayed; `to_dict()`.
+- `ScarPersistenceStatus` — frozen dataclass: status, reason; `to_dict()`.
+- `scar_persistence_status()` — returns `ACTIVE` with a reason describing Chronicle-backed persistence (this module no longer reports `NOT_IMPLEMENTED` for the persistence mechanism itself; `NOT_IMPLEMENTED` remains defined as a constant for compatibility/documentation of the prior state).
+- `create_scar(...)` — builds a `ScarRecord` with `constructed=True, persisted=False`.
+- `create_network_scar(...)` — like `create_scar`, but raises `ValueError` unless `should_record_network_scar()` returns True for the given outcome.
+- `should_record_network_scar(outcome, meaningful)` — bool gate combining the outcome allowlist and an explicit meaningful flag.
+- `persisted_record(scar, verified=...)`, `record_from_replay(scar)`, `verify_scar_record(record, scars_by_id)`, `replay_scars(scars_by_id)`, `load_scar(scars_by_id, scar_id)` — state-transition helpers consumed by `core.Lantern`; not intended to be called directly against a live Chronicle without going through `Lantern`.
+- `describe_scar_claim(scar_id, summary)` — non-persisting, conversational-use-only helper; always `persisted: False`.
+- `SCAR_EVENT_TYPE` (`"SCAR_RECORDED"`) — the Chronicle event type used for durable Scar writes.
+- `NETWORK_SCAR_OUTCOMES` — frozenset of outcome strings eligible for network-triggered Scars.
+
+**Inputs:** Plain strings/dicts describing an outcome (source, trigger, observation, outcome, severity, optional lesson/provenance/related ids). Persistence-facing functions additionally take a `scars_by_id` dict or a live `Lantern` instance (see `core`).
+
+**Outputs:** `ScarRecord`/`Scar`/`ScarPersistenceStatus` dataclasses; `describe_scar_claim()` returns a plain dict.
+
+**Functional and tested:** Yes. `tests/test_lantern_scars.py` (12 tests: persistence-status reporting, non-persisting claim helper, construction without persistence, Chronicle-backed persistence and verification, restart survival and replay, snapshot-preserved scars, corrupted-Chronicle detection before replay, failed-append not reporting `persisted=True`, network-outcome gating, network-integration persistence) all pass. Durable persistence, restart, replay, corruption-detection, and failure-semantics behavior is additionally exercised end-to-end through `core.Lantern.persist_scar/load_scar/verify_scar/replay_scars/startup`.
+
+**Depends on other lantern modules:** `protocol` (`PROTOCOL_VERSION` default). Durable persistence itself is implemented on `core.Lantern`, which imports this module for the `Scar`/`ScarRecord` shapes and the Chronicle event type constant — `scars.py` itself has no import-time dependency on `core`.
+
+**Standalone:** Nearly — `Scar`/`ScarRecord` construction and the network-outcome gate need only `protocol.py`; actual durable persist/verify/replay requires a `core.Lantern` instance (and therefore a Chronicle).
+
+**Standalone API candidate:** Yes, paired with `core.Lantern` — "record and later recall a meaningful experience, verifiably" is a coherent, discrete capability, and it is the durable half of the DISCOVER…INTEGRATE→SCAR→MEMORY loop described in `ARCHITECTURE.md`.
 
 ---
 

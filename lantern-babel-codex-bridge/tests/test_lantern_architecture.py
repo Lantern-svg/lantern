@@ -244,3 +244,29 @@ def test_referee_does_not_import_continuity_as_its_own_expected_value():
 
     assert REGISTRY.constants is not vars(continuity_module)
 
+
+
+def test_identity_proof_capability_registered_and_disabled_by_default():
+    # New Phase 2A capability: identity_proof follows the exact same
+    # "registered, disabled-by-default, only a capability negotiation
+    # signal" pattern codex_update already established. This locks that
+    # pattern in at the architecture-referee level, not just in
+    # compatibility.py directly.
+    assert "identity_proof" in CANONICAL_CAPABILITIES
+    assert CANONICAL_CAPABILITIES["identity_proof"] is False
+    assert DEFAULT_CAPABILITIES["identity_proof"] is False
+
+
+def test_identity_verification_success_does_not_appear_as_a_trust_invariant():
+    # Sanity guard: nothing in the frozen constants or canonical
+    # capabilities ties identity_proof/CRYPTOGRAPHICALLY_VERIFIED to
+    # codex_update or any other authority-bearing constant. If a future
+    # change ever wired identity verification to flip codex_update on,
+    # this would still catch it via the existing
+    # test_codex_update_true_is_trust_invariant_violation coverage --
+    # this test only documents the current, correct independence.
+    from lantern.architecture import FROZEN_CONSTANTS
+
+    assert FROZEN_CONSTANTS["scar_auto_mutates_belief"] is False
+    assert CANONICAL_CAPABILITIES["codex_update"] is False
+    assert CANONICAL_CAPABILITIES["identity_proof"] is False

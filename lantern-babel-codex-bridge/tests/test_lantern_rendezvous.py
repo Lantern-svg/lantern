@@ -170,6 +170,50 @@ def test_health_reports_pending_count_without_details(tmp_path):
     assert health["total"] == 2
 
 
+def test_verify_persisted_confirms_a_real_write_via_independent_read(tmp_path):
+    """submit() returning is only category D-candidate (a write call
+    completed); verify_persisted() re-parses the Chronicle file from
+    disk -- not self.requests -- so a True result is an independent
+    read confirming the earlier write, satisfying Principle 2's
+    action -> external result -> independent retrieval -> verification
+    chain.
+    """
+    monitor = JoinMonitor(tmp_path / "joins.jsonl")
+    request, is_new, _ = monitor.submit(_payload())
+
+    assert is_new is True
+    assert monitor.verify_persisted(request.request_id) is True
+
+
+def test_verify_persisted_is_false_for_a_request_id_that_was_never_submitted(tmp_path):
+    """A request_id that was never actually written must be reported as
+    unverified, not assumed persisted just because it looks well-formed.
+    """
+    monitor = JoinMonitor(tmp_path / "joins.jsonl")
+    monitor.submit(_payload())
+
+    assert monitor.verify_persisted("never-submitted-id") is False
+
+
+def test_verify_persisted_reads_the_file_not_the_in_memory_cache(tmp_path):
+    """Even if the in-memory dict were wrong or stale, verify_persisted()
+    must still answer from the on-disk Chronicle -- this is what makes
+    it an independent retrieval rather than a restatement of the claim
+    that was already made in-process.
+    """
+    path = tmp_path / "joins.jsonl"
+    writer = JoinMonitor(path)
+    request, _, _ = writer.submit(_payload())
+
+    # A second, separate monitor instance never called submit() itself --
+    # its own in-memory self.requests only exists because _rebuild()
+    # replayed the file. verify_persisted() re-reads that same file
+    # independently of whatever _rebuild() cached.
+    reader = JoinMonitor(path)
+    assert reader.verify_persisted(request.request_id) is True
+    assert reader.verify_persisted("some-other-id-entirely") is False
+
+
 # ==================================================
 # HTTP wiring: POST /join, GET /health
 # ==================================================
@@ -201,6 +245,7 @@ def test_post_join_over_http_is_accepted_and_reported_in_health(node):
     assert result["accepted"] is True
     assert result["status"] == AWAITING_HANDSHAKE
     assert result["is_new"] is True
+    assert result["persisted"] is True
     assert "not a trust or capability grant" in result["note"].lower()
 
     status, health = _request(base, "/health")
@@ -238,14 +283,24 @@ def test_join_does_not_bypass_handshake_or_capability_gate(node):
     """Announcing via /join must have zero effect on what /message will
     accept -- the existing handshake and capability negotiation remain
     the only path to actually exchanging anything.
+
+    Category C reason-string update (Phase 4 compatibility migration):
+    this scenario sends no session_id, so the secure-default boundary
+    now rejects it at the LEGACY_MODE_DISABLED check, before capability
+    negotiation is even reached. The invariant under test -- that /join
+    grants nothing toward accepting a message -- is not just preserved
+    but strengthened: unauthenticated traffic is now rejected earlier
+    and unconditionally, regardless of what capabilities it claims.
     """
     base, server = node
 
     status, join_result = _request(base, "/join", "POST", _payload())
     assert join_result["accepted"] is True
 
-    # No capability was granted by the join alone: sending a message that
-    # doesn't claim evidence_exchange is still rejected exactly as before.
+    # No capability was granted by the join alone: sending a message
+    # without a verified session is still rejected exactly as before,
+    # just at the (now earlier) legacy-mode boundary instead of the
+    # capability-negotiation step.
     message = {
         "message_id": "m1",
         "protocol": "0.82",
@@ -259,11 +314,19 @@ def test_join_does_not_bypass_handshake_or_capability_gate(node):
         {"message": message, "peer_capabilities": {}},
     )
     assert result["accepted"] is False
-    assert "evidence_exchange" in result["reason"]
+    assert "LEGACY_MODE_DISABLED" in result["reason"]
     assert len(server.node.lantern.kernel.observations) == 0
 
 
 def test_join_does_not_weaken_codex_update_protection(node):
+    """Category C reason-string update: same rationale as above. No
+    session_id is presented, so the secure-default boundary rejects
+    this before capability negotiation runs. CODEX_UPDATE protection is
+    not weakened by this change -- it is strictly reinforced, since
+    CODEX_UPDATE remains rejected even in the unreachable case where
+    legacy mode were enabled (see test_bootstrap_transport.py's
+    codex_update coverage under the secure path).
+    """
     base, server = node
     _request(base, "/join", "POST", _payload(capabilities={"codex_update": True}))
 
@@ -280,7 +343,7 @@ def test_join_does_not_weaken_codex_update_protection(node):
         {"message": message, "peer_capabilities": {"codex_update": True}},
     )
     assert result["accepted"] is False
-    assert "codex_update" in result["reason"]
+    assert "LEGACY_MODE_DISABLED" in result["reason"]
     assert len(server.node.lantern.kernel.evidence) == 0
 
 
