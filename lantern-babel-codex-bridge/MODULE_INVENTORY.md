@@ -1,6 +1,6 @@
 # Lantern Babel Codex Bridge — Module Inventory
 
-Repo root: `/home/ubuntu/.openclaw/workspace/lantern-babel-codex-bridge/`
+Repo root: `lantern-babel-codex-bridge/` (this file's directory)
 Package: `src/lantern/`
 Full test run: `.venv/bin/python -m pytest tests/ -q` → **698 passed, 0 failed** (confirmed by running it during the v0.84 release gate). This file still is not a complete per-module re-audit of every newer module, but its header now reflects the current tested baseline rather than the long-stale 142-test snapshot.
 
