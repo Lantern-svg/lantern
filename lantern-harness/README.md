@@ -147,6 +147,34 @@ Tools are registered programmatically via
 default. Tool discovery never implies authorization; call
 `boundary.authorize(name)` explicitly before a tool can execute.
 
+## Use Lantern from another agent (MCP server)
+
+`lantern_harness.mcp_server` exposes real Lantern harness capabilities
+as MCP tools, so any MCP-compatible agent client (Claude Desktop,
+Claude Code, or any other MCP host) can call them directly, without a
+human relaying through this REPL. This is the reverse direction of
+`lantern.mcp_client`/`lantern.mcp_integration` in the core package
+(Lantern connecting *out* to other MCP servers) -- this module makes
+Lantern *act as* an MCP server.
+
+```bash
+../lantern-babel-codex-bridge/.venv/bin/pip install -e ".[mcp]"
+../lantern-babel-codex-bridge/.venv/bin/lantern-harness-mcp
+```
+
+Exposed tools: `lantern_observe`, `lantern_add_evidence`,
+`lantern_confidence`, `lantern_decide`, `lantern_compile`,
+`lantern_self_model`, `lantern_branch_open`, `lantern_spine_read`,
+`lantern_witness_integrity`. Every tool is a thin wrapper around an
+already-tested component -- no new decision/confidence/authorization
+logic exists in this module. Deliberately **not** exposed: anything
+that would let a remote MCP client execute an arbitrary
+`ToolBoundary`-registered tool or otherwise act on the external world
+-- this server surfaces Lantern's epistemic primitives only
+(`test_server_exposes_no_tool_capable_of_external_action` enforces
+this). It runs over stdio only (matches how MCP hosts launch local
+servers as a subprocess); nothing in this module binds a network port.
+
 ## Create a project
 
 `projects/` is a plain workspace directory for your own files. It is

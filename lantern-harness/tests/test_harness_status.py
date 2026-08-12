@@ -70,3 +70,14 @@ def test_format_status_report_produces_readable_text():
     assert "Reasoning Engine: NOT_CONFIGURED" in text
     assert "Self-Model:" in text
     assert "Operating Loop:" in text
+
+def test_status_report_mcp_server_status_reflects_real_sdk_availability():
+    tmp = Path(tempfile.mkdtemp())
+    bridge = LanternBridge(tmp, node_id="status-test-mcp")
+    report = status_report(bridge, None, ToolBoundary())
+    try:
+        import mcp  # noqa: F401
+        assert "AVAILABLE" in report["mcp_server_status"]
+        assert "NOT_AVAILABLE" not in report["mcp_server_status"]
+    except ImportError:
+        assert "NOT_AVAILABLE" in report["mcp_server_status"]

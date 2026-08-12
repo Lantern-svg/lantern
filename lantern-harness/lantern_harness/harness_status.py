@@ -9,6 +9,14 @@ from .bridge import LanternBridge
 from .reasoning.base import ReasoningEngine
 
 
+def _mcp_server_status() -> str:
+    try:
+        import mcp  # noqa: F401
+    except ImportError:
+        return "NOT_AVAILABLE (mcp package not installed; pip install lantern-harness[mcp] to expose Lantern as an MCP server via lantern_harness.mcp_server)"
+    return "AVAILABLE (lantern_harness.mcp_server can expose lantern_observe/add_evidence/confidence/decide/compile/self_model/branch_open/spine_read/witness_integrity as MCP tools over stdio; run with the lantern-harness-mcp console script)"
+
+
 def lantern_version() -> str:
     """Prefer the live module's __version__ attribute over installer
     dist-info metadata: dist-info can go stale (observed in practice --
@@ -58,7 +66,8 @@ def status_report(bridge: LanternBridge, engine: ReasoningEngine | None, tool_bo
             "discovered": tool_boundary.discover(),
             "authorized": sorted(tool_boundary._authorized),  # noqa: SLF001 - status reporting only
         },
-        "mcp_status": "NOT_CONNECTED (harness does not auto-connect an MCP server; see EXTERNAL_BOOTSTRAP.md in lantern-babel-codex-bridge for lantern.mcp_client usage)",
+        "mcp_status": "NOT_CONNECTED (harness does not auto-connect to an external MCP server; see EXTERNAL_BOOTSTRAP.md in lantern-babel-codex-bridge for lantern.mcp_client usage)",
+        "mcp_server_status": _mcp_server_status(),
         "branching_status": "IMPLEMENTED (lantern_harness.spine.BranchStore/SpineCommitter -- real Branch/Spine model built on top of Lantern's Chronicle; Lantern v0.84 core itself still has no branch/spine/commitment concept, see LanternBridge.branches())",
         "prompt_compiler_status": "IMPLEMENTED (lantern_harness.prompt_compiler.PromptCompiler -- newly added this harness turn, not part of Lantern v0.84 core)",
         "perspective_engine_status": "PARTIAL: lantern_harness.perspective_differential.PerspectiveDifferentialEngine is a newly-added, narrow variance calculator over caller-supplied Perspective records (NOT part of Lantern v0.84 core, NOT the full Perspective Mesh roadmap item -- no merge/vote/consensus logic exists)",
@@ -96,6 +105,7 @@ def format_status_report(report: dict) -> str:
     lines.append(f"Confidence Field: {report['confidence_field_status']}")
     lines.append(f"Decision State Machine: {report['decision_state_machine_status']}")
     lines.append(f"MCP: {report['mcp_status']}")
+    lines.append(f"MCP Server: {report['mcp_server_status']}")
     lines.append(f"Tools: discovered={report['tools']['discovered']}, authorized={report['tools']['authorized']}")
     lines.append(f"Reality Boundary: {report['reality_boundary_status']}")
     lines.append(f"Self-Model: {report['self_model_status']}")

@@ -4,3 +4,4 @@ __pycache__/
 memory/lantern_data/
 logs/*.log
 *.egg-info/
+build/

@@ -30,9 +30,13 @@ anthropic = [
 google = [
     "httpx>=0.24.0",
 ]
+mcp = [
+    "mcp>=2.0.0",
+]
 
 [project.scripts]
 lantern-harness = "main:main"
+lantern-harness-mcp = "lantern_harness.mcp_server:main"
 
 [tool.setuptools]
 py-modules = ["main"]
