@@ -16,10 +16,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from lantern_harness.bootstrap import bootstrap, format_bootstrap_report
 from lantern_harness.harness_status import format_status_report, status_report
+from lantern_harness.prompt_compiler import PromptCompiler
 from lantern_harness.reasoning.base import ReasoningEngineUnavailable
 from lantern_harness.tools.boundary import ToolBoundary
 
-COMMANDS = ("/memory", "/history", "/beliefs", "/evidence", "/branches", "/identity", "/tools", "/projects", "/status", "/new", "/exit")
+COMMANDS = ("/memory", "/history", "/beliefs", "/evidence", "/branches", "/identity", "/tools", "/projects", "/status", "/compile", "/new", "/exit")
 
 SYSTEM_PROMPT_PATH = Path(__file__).resolve().parent / "prompts" / "system.md"
 
@@ -34,6 +35,19 @@ def handle_command(command: str, bridge, engine, tool_boundary) -> str:
     if command == "/status":
         report = status_report(bridge, engine, tool_boundary)
         return format_status_report(report)
+    if command.startswith("/compile"):
+        request = command[len("/compile"):].strip()
+        if not request:
+            return "usage: /compile <your request> -- compiles a structured prompt, does not send it anywhere"
+        compiler = PromptCompiler(bridge=bridge)
+        try:
+            result = compiler.compile(request)
+        except ValueError as exc:
+            return f"COMPILE_ERROR: {exc}"
+        header = f"[compiled, mode={result.mode}]"
+        if result.notes:
+            header += "\nnotes: " + "; ".join(result.notes)
+        return f"{header}\n\n{result.text}"
     if command == "/identity":
         return str(bridge.identity_status())
     if command == "/tools":

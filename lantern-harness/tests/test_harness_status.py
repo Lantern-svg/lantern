@@ -27,7 +27,25 @@ def test_status_report_labels_unimplemented_concepts_honestly():
     bridge = LanternBridge(tmp, node_id="status-test-2")
     report = status_report(bridge, None, ToolBoundary())
     assert "NOT_IMPLEMENTED" in report["branching_status"]
-    assert "NOT_IMPLEMENTED" in report["perspective_engine_status"]
+    assert "NOT_IMPLEMENTED" in report["reality_boundary_status"]
+
+
+def test_status_report_perspective_engine_is_labeled_partial_not_full_mesh():
+    """PerspectiveDifferentialEngine was added this turn -- it is real,
+    but it is not the Perspective Mesh / Decision State Machine roadmap
+    item, and the status report must not claim it is."""
+    tmp = Path(tempfile.mkdtemp())
+    bridge = LanternBridge(tmp, node_id="status-test-2b")
+    report = status_report(bridge, None, ToolBoundary())
+    assert "PARTIAL" in report["perspective_engine_status"]
+    assert "NOT the full Perspective Mesh" in report["perspective_engine_status"]
+
+
+def test_status_report_prompt_compiler_reported_as_implemented():
+    tmp = Path(tempfile.mkdtemp())
+    bridge = LanternBridge(tmp, node_id="status-test-2c")
+    report = status_report(bridge, None, ToolBoundary())
+    assert "IMPLEMENTED" in report["prompt_compiler_status"]
 
 
 def test_format_status_report_produces_readable_text():

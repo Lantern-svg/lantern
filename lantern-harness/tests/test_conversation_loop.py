@@ -84,3 +84,19 @@ def test_system_prompt_is_actually_sent_to_the_reasoning_engine(monkeypatch):
     assert "NOT_IMPLEMENTED" in first_call[0]["content"]
     assert first_call[-1] == {"role": "user", "content": "hello there"}
 
+def test_compile_command_produces_structured_prompt_not_fabricated():
+    result = _run_main("/compile Should we delete the production backups?\n/exit\n")
+    assert "[compiled, mode=heavyweight]" in result.stdout
+    assert "NOT_PROVIDED" in result.stdout  # no fabricated evidence/assumptions
+    assert "INVESTIGATION REQUEST" in result.stdout
+
+
+def test_compile_command_with_no_request_shows_usage():
+    result = _run_main("/compile\n/exit\n")
+    assert "usage: /compile" in result.stdout
+
+
+def test_compile_command_lightweight_for_ordinary_question():
+    result = _run_main("/compile What is the boiling point of water?\n/exit\n")
+    assert "[compiled, mode=lightweight]" in result.stdout
+

@@ -88,7 +88,12 @@ print(format_bootstrap_report(bootstrap()))
 
 ## Commands
 
-`/status` `/memory` `/identity` `/tools` `/branches` `/exit`
+`/status` `/memory` `/identity` `/tools` `/branches` `/compile <request>` `/exit`
+
+`/compile <request>` runs the Prompt Compiler (`lantern_harness.prompt_compiler`)
+on your text and prints a structured investigation prompt you can hand to
+any reasoning engine -- it does not send the request anywhere itself.
+Missing information is marked `NOT_PROVIDED` / `UNKNOWN`, never invented.
 
 (`/history`, `/beliefs`, `/evidence`, `/projects` are recognized but
 not yet implemented as formatted views in this version — see
@@ -116,10 +121,25 @@ epistemic state of its own.
   verification (`Chronicle.verify()`). `VALID` means the recorded
   sequence has not been silently altered — it does **not** mean the
   underlying claims are true.
-- **Branches / Spine / Commitment**, a **Perspective Differential
-  engine**, and a dedicated **RealityBoundary** class do not exist in
-  Lantern v0.84. This harness reports them as `NOT_IMPLEMENTED` rather
-  than simulating them.
+- **Branches / Spine / Commitment**, a **Self-Model**, a **Confidence
+  Field**, a **Decision State Machine**, and a dedicated
+  **RealityBoundary** class do not exist in Lantern v0.84 or in this
+  harness. This harness reports them as `NOT_IMPLEMENTED` rather than
+  simulating them.
+- **Prompt Compiler** (`lantern_harness.prompt_compiler.PromptCompiler`)
+  is newly added in this harness (not part of Lantern v0.84 core). It
+  turns a request into a structured prompt, scaling between a light and
+  a heavyweight template, and reads real Evidence/Contradiction records
+  through `LanternBridge` when a `concept` is supplied -- it never
+  invents evidence, assumptions, or contradictions it wasn't given.
+- **Perspective Differential Engine**
+  (`lantern_harness.perspective_differential.PerspectiveDifferentialEngine`)
+  is also newly added. Given two or more independently-produced
+  `Perspective` records, it computes variance across confidence,
+  evidence, assumption bias, and novelty, and reports which dimension
+  diverges most. It is **not** the full Perspective Mesh / Decision
+  State Machine from the architecture roadmap -- it does not merge,
+  vote, or select a winner. Variance is a diagnostic signal, not proof.
 
 ## Known limitations
 

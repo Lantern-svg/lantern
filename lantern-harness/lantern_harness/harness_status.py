@@ -10,6 +10,21 @@ from .reasoning.base import ReasoningEngine
 
 
 def lantern_version() -> str:
+    """Prefer the live module's __version__ attribute over installer
+    dist-info metadata: dist-info can go stale (observed in practice --
+    a dev venv reported v0.83 via importlib.metadata while the actually
+    imported module was v0.84, because dist-info wasn't regenerated
+    after a version bump). __version__ reflects the code that is
+    actually running right now."""
+    try:
+        import lantern
+
+        version = getattr(lantern, "__version__", None)
+        if version:
+            return str(version)
+    except ImportError:
+        pass
+
     try:
         return importlib.metadata.version("lantern")
     except importlib.metadata.PackageNotFoundError:
@@ -45,7 +60,8 @@ def status_report(bridge: LanternBridge, engine: ReasoningEngine | None, tool_bo
         },
         "mcp_status": "NOT_CONNECTED (harness does not auto-connect an MCP server; see EXTERNAL_BOOTSTRAP.md in lantern-babel-codex-bridge for lantern.mcp_client usage)",
         "branching_status": "NOT_IMPLEMENTED (Lantern v0.84 has no branch/spine/commitment model)",
-        "perspective_engine_status": "NOT_IMPLEMENTED (no perspective differential engine exists in Lantern v0.84)",
+        "prompt_compiler_status": "IMPLEMENTED (lantern_harness.prompt_compiler.PromptCompiler -- newly added this harness turn, not part of Lantern v0.84 core)",
+        "perspective_engine_status": "PARTIAL: lantern_harness.perspective_differential.PerspectiveDifferentialEngine is a newly-added, narrow variance calculator over caller-supplied Perspective records (NOT part of Lantern v0.84 core, NOT the full Perspective Mesh / Decision State Machine roadmap item -- no merge/vote/consensus logic exists)",
         "validation_status": "PARTIAL (EvidenceKernel.belief() sigmoid scoring + contradiction detection are real; no separate weighted-threshold ValidationEngine class exists)",
         "reality_boundary_status": "NOT_IMPLEMENTED (no dedicated RealityBoundary class in Lantern v0.84; this harness does not fabricate one)",
     }
@@ -71,6 +87,8 @@ def format_status_report(report: dict) -> str:
     lines.append(f"Witness Integrity: {report['witness_integrity'].get('status')}")
     lines.append(f"Validation: {report['validation_status']}")
     lines.append(f"Branches / Spine: {report['branching_status']}")
+    lines.append(f"Prompt Compiler: {report['prompt_compiler_status']}")
+    lines.append(f"Perspective Differential: {report['perspective_engine_status']}")
     lines.append(f"MCP: {report['mcp_status']}")
     lines.append(f"Tools: discovered={report['tools']['discovered']}, authorized={report['tools']['authorized']}")
     lines.append(f"Reality Boundary: {report['reality_boundary_status']}")
