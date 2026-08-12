@@ -1,26 +1,54 @@
 {
   "agent": "Lantern",
-  "capability": "Belief Reconciliation",
-  "implemented": true,
-  "input": {
-    "type": "two independent belief states",
-    "format": "HTTP/JSON"
-  },
-  "output": [
-    "evidence-aware comparison",
-    "contradiction classification",
-    "confidence comparison",
-    "plain-language explanation"
-  ],
-  "protocol": "HTTP/JSON",
-  "endpoint": "configured runtime endpoint",
-  "method": "POST",
-  "path": "/v1/reconcile",
-  "settlement": "x402",
-  "payment": {
-    "mode": "per-call",
-    "price": "configurable"
-  },
-  "trust": "payment does not imply truth or trust",
-  "contact": "configured agent/service endpoint"
+  "capabilities": [
+    {
+      "capability": "Belief Reconciliation (HTTP, paid)",
+      "implemented": true,
+      "tested": true,
+      "live": false,
+      "input": {
+        "type": "two independent belief states",
+        "format": "HTTP/JSON"
+      },
+      "output": [
+        "evidence-aware comparison",
+        "contradiction classification",
+        "confidence comparison",
+        "plain-language explanation"
+      ],
+      "protocol": "HTTP/JSON",
+      "endpoint": "not yet deployed -- see REVENUE.md CAPABILITY_REQUIRED",
+      "method": "POST",
+      "path": "/v1/reconcile",
+      "settlement": "x402",
+      "payment": {
+        "mode": "per-call",
+        "price": "configurable"
+      },
+      "trust": "payment does not imply truth or trust",
+      "contact": "not yet deployed"
+    },
+    {
+      "capability": "Lantern Harness tools over MCP (free, local)",
+      "implemented": true,
+      "tested": true,
+      "live": "locally runnable, not a hosted/remote endpoint",
+      "tools": [
+        "lantern_observe",
+        "lantern_add_evidence",
+        "lantern_confidence",
+        "lantern_decide",
+        "lantern_compile",
+        "lantern_self_model",
+        "lantern_branch_open",
+        "lantern_spine_read",
+        "lantern_witness_integrity"
+      ],
+      "protocol": "MCP (stdio transport)",
+      "settlement": "none -- free, local, no payment path exists for this capability",
+      "trust": "tool discovery does not imply authorization; this server exposes no external-action tool",
+      "install": "pip install \"lantern-harness[mcp]\", then run lantern-harness-mcp",
+      "contact": "not applicable -- runs as a local subprocess launched by the calling agent host, not a hosted service"
+    }
+  ]
 }
