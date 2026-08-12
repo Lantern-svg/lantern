@@ -1,3 +1,4 @@
+import json
 import os
 import sys
 from pathlib import Path
@@ -5,7 +6,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from lantern_harness.reasoning import build_engine
-from lantern_harness.reasoning.api_provider import AnthropicEngine, OpenAIEngine
+from lantern_harness.reasoning.api_provider import AnthropicEngine, GoogleEngine, OpenAIEngine
 from lantern_harness.reasoning.ollama_provider import OllamaEngine
 
 
@@ -45,3 +46,41 @@ def test_anthropic_detect_never_exposes_key_value(monkeypatch):
     available, detail = engine.detect()
     assert available is True
     assert "sk-secret-value-should-never-appear" not in detail
+
+def test_google_engine_forwards_system_message_as_system_instruction(monkeypatch):
+    """Regression test: GoogleEngine.respond() used to silently drop
+    system-role messages instead of honoring them, which would make the
+    harness's prompts/system.md invisible to Google models with no error
+    raised. Verify the outgoing request body actually carries it."""
+    monkeypatch.setenv("GOOGLE_API_KEY", "fake-key-for-test")
+    engine = GoogleEngine()
+
+    captured = {}
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def read(self):
+            return json.dumps({"candidates": [{"content": {"parts": [{"text": "ok"}]}}]}).encode("utf-8")
+
+    def fake_urlopen(req, timeout=None):
+        captured["body"] = json.loads(req.data.decode("utf-8"))
+        return FakeResponse()
+
+    import lantern_harness.reasoning.api_provider as api_provider_mod
+
+    monkeypatch.setattr(api_provider_mod.urllib.request, "urlopen", fake_urlopen)
+
+    engine.respond([
+        {"role": "system", "content": "be honest about NOT_IMPLEMENTED capabilities"},
+        {"role": "user", "content": "hello"},
+    ])
+
+    assert "systemInstruction" in captured["body"]
+    assert captured["body"]["systemInstruction"]["parts"][0]["text"] == "be honest about NOT_IMPLEMENTED capabilities"
+    assert all(c["role"] != "system" for c in captured["body"]["contents"])
+

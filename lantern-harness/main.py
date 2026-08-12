@@ -21,6 +21,14 @@ from lantern_harness.tools.boundary import ToolBoundary
 
 COMMANDS = ("/memory", "/history", "/beliefs", "/evidence", "/branches", "/identity", "/tools", "/projects", "/status", "/new", "/exit")
 
+SYSTEM_PROMPT_PATH = Path(__file__).resolve().parent / "prompts" / "system.md"
+
+
+def load_system_prompt():
+    if not SYSTEM_PROMPT_PATH.exists():
+        return None
+    return SYSTEM_PROMPT_PATH.read_text(encoding="utf-8")
+
 
 def handle_command(command: str, bridge, engine, tool_boundary) -> str:
     if command == "/status":
@@ -46,6 +54,9 @@ def handle_command(command: str, bridge, engine, tool_boundary) -> str:
 
 
 def run_repl(bridge, engine, tool_boundary):
+    system_prompt = load_system_prompt()
+    history = [{"role": "system", "content": system_prompt}] if system_prompt else []
+
     print("You:", end=" ", flush=True)
     for line in sys.stdin:
         line = line.strip()
@@ -68,11 +79,14 @@ def run_repl(bridge, engine, tool_boundary):
             print("You:", end=" ", flush=True)
             continue
 
+        history.append({"role": "user", "content": line})
         try:
-            response = engine.respond([{"role": "user", "content": line}])
+            response = engine.respond(history)
             print(response.text)
+            history.append({"role": "assistant", "content": response.text})
         except ReasoningEngineUnavailable as exc:
             print(f"REASONING_ENGINE_ERROR: {exc}")
+            history.pop()  # do not retain a turn the engine never actually answered
 
         print("You:", end=" ", flush=True)
 

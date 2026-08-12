@@ -1,6 +1,10 @@
+import io
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 HARNESS_ROOT = Path(__file__).resolve().parent.parent
 
@@ -42,3 +46,41 @@ def test_graceful_shutdown_via_exit_command():
 def test_graceful_shutdown_via_eof():
     result = _run_main("")
     assert result.returncode == 0
+
+def test_system_prompt_is_actually_sent_to_the_reasoning_engine(monkeypatch):
+    """Regression test: prompts/system.md existed on disk but main.py
+    never read it or passed it to the reasoning engine -- the file was
+    inert. Verify run_repl() actually threads it through as a system
+    message on the first call to engine.respond()."""
+    import main as main_mod
+    from lantern_harness.bridge import LanternBridge
+    from lantern_harness.reasoning.base import ReasoningResponse
+
+    tmp = Path(tempfile.mkdtemp())
+    bridge = LanternBridge(tmp, node_id="repl-test")
+    bridge.ensure_identity()
+    bridge.startup()
+
+    captured_messages = []
+
+    class FakeEngine:
+        provider_name = "fake"
+
+        def respond(self, messages, tools=None):
+            captured_messages.append(list(messages))
+            return ReasoningResponse(text="fake reply", provider="fake", model="fake-model")
+
+        def describe(self):
+            return {"provider": "fake", "model": "fake-model", "available": True, "detail": "fake"}
+
+    from lantern_harness.tools.boundary import ToolBoundary
+
+    monkeypatch.setattr(sys, "stdin", io.StringIO("hello there\n/exit\n"))
+    main_mod.run_repl(bridge, FakeEngine(), ToolBoundary())
+
+    assert len(captured_messages) == 1
+    first_call = captured_messages[0]
+    assert first_call[0]["role"] == "system"
+    assert "NOT_IMPLEMENTED" in first_call[0]["content"]
+    assert first_call[-1] == {"role": "user", "content": "hello there"}
+

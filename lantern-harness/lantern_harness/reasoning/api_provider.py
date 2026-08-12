@@ -130,12 +130,15 @@ class GoogleEngine(ReasoningEngine):
         if not api_key:
             raise ReasoningEngineUnavailable(f"{self.api_key_env} not set")
 
+        system_text = "\n".join(m["content"] for m in messages if m.get("role") == "system")
         contents = [
             {"role": "user" if m.get("role") != "assistant" else "model", "parts": [{"text": m["content"]}]}
             for m in messages
             if m.get("role") != "system"
         ]
         payload = {"contents": contents}
+        if system_text:
+            payload["systemInstruction"] = {"parts": [{"text": system_text}]}
         body = json.dumps(payload).encode("utf-8")
         url = (
             f"https://generativelanguage.googleapis.com/v1beta/models/"
