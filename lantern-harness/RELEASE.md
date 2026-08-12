@@ -3,6 +3,19 @@
 Status document, like `RELEASE.md` in `lantern-babel-codex-bridge`.
 Only records changes that actually happened and were actually tested.
 
+## Peacemaker identity naming (same 0.3.0 session, after transfer readiness)
+
+Added `PEACEMAKER.md`: names the personal, transferable *instance*
+built on the Lantern architecture "Peacemaker," per explicit operator
+directive. This is a naming/documentation change, not a rewrite of
+history -- no package, module, class, or prior commit was renamed;
+`git log` remains unedited. `TransferManifest` gained one new field,
+`lineage` (`{"architecture": "Lantern", "instance_model": "Peacemaker"}`),
+so the distinction is reportable as data by any receiving operator or
+agent, not just asserted in prose. 1 new test
+(`test_manifest_lineage_names_lantern_as_architecture_and_peacemaker_as_instance_model`).
+Full harness suite: 163/163 passing.
+
 ## 0.3.0 (in progress -- not yet tagged/released)
 
 Lantern x Odysseus integration + transfer readiness. Built and tested

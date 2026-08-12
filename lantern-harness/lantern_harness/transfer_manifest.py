@@ -58,6 +58,18 @@ from .harness_status import HARNESS_VERSION, lantern_version
 from .self_model import KNOWN_CAPABILITIES, KNOWN_GAPS, STANDING_OPERATOR_BOUNDARIES
 
 
+LINEAGE = {
+    "architecture": "Lantern",
+    "instance_model": "Peacemaker",
+    "note": (
+        "Lantern is the architecture/protocol/lineage (lantern-babel-codex-bridge). "
+        "Peacemaker is the naming for a personal, transferable running instance built "
+        "on that architecture. This field does not rename any package, module, class, "
+        "commit, or prior release -- those remain named Lantern in their own history. "
+        "See PEACEMAKER.md."
+    ),
+}
+
 REAUTHORIZATION_REQUIRED = (
     "where this instance runs (host/network placement)",
     "what reasoning engine credentials it is given, if any",
@@ -125,6 +137,7 @@ class TransferManifest:
     lantern_core_commit: str
     python_version: str
     platform_summary: str
+    lineage: dict = field(default_factory=lambda: dict(LINEAGE))
     notes: tuple = field(default_factory=tuple)
 
     def to_dict(self) -> dict:
@@ -144,6 +157,7 @@ class TransferManifest:
                 "reasoning_engine_api_key_env": self.reasoning_engine_api_key_env,
                 "note": "env var NAME only, never the key value -- see lantern_harness.config",
             },
+            "lineage": self.lineage,
             "state_summary": self.state_summary,
             "witness_integrity": self.witness_integrity,
             "capabilities": list(self.capabilities),
@@ -168,6 +182,8 @@ class TransferManifest:
         lines.append(f"lantern_version: {self.lantern_version}")
         lines.append(f"harness_version: {self.harness_version}")
         lines.append(f"lantern_protocol_version: {self.protocol_version}")
+        lines.append("")
+        lines.append(f"lineage: architecture={self.lineage.get('architecture')}, instance_model={self.lineage.get('instance_model')}")
         lines.append("")
         lines.append(f"reasoning_engine: provider={self.reasoning_engine_provider}, api_key_env={self.reasoning_engine_api_key_env}")
         lines.append("")
@@ -257,5 +273,6 @@ def build_manifest(bridge: LanternBridge, engine=None, harness_root: Optional[Pa
         lantern_core_commit=_lantern_core_commit(),
         python_version=platform.python_version(),
         platform_summary=platform.platform(),
+        lineage=dict(LINEAGE),
         notes=tuple(notes),
     )

@@ -122,3 +122,19 @@ def test_manifest_to_dict_and_format_round_trip_without_error():
     formatted = manifest.format()
     assert "TRANSFER MANIFEST" in formatted
     assert manifest.node_id in formatted
+
+
+def test_manifest_lineage_names_lantern_as_architecture_and_peacemaker_as_instance_model():
+    """This is a naming/identity field only -- it must not rename the
+    package, and it must not claim prior history was originally named
+    Peacemaker."""
+    bridge = _fresh_bridge("lineage")
+    manifest = build_manifest(bridge)
+    assert manifest.lineage["architecture"] == "Lantern"
+    assert manifest.lineage["instance_model"] == "Peacemaker"
+    payload = manifest.to_dict()
+    assert payload["lineage"]["architecture"] == "Lantern"
+    assert payload["lineage"]["instance_model"] == "Peacemaker"
+    formatted = manifest.format()
+    assert "architecture=Lantern" in formatted
+    assert "instance_model=Peacemaker" in formatted

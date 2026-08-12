@@ -18,6 +18,12 @@ adapter) to Lantern's evidence/identity/memory layer through a thin
 `LanternBridge` adapter. It does not duplicate or reimplement any of
 Lantern's internals.
 
+A running instance of this harness -- with its own identity, evidence,
+and history -- may be personally carried and transferred by one
+operator; see [`PEACEMAKER.md`](./PEACEMAKER.md) for what that naming
+means and does not mean, and "Transfer an instance" below for the
+actual procedure.
+
 ## How they relate
 
 ```
