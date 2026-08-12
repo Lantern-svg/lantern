@@ -175,6 +175,31 @@ that would let a remote MCP client execute an arbitrary
 this). It runs over stdio only (matches how MCP hosts launch local
 servers as a subprocess); nothing in this module binds a network port.
 
+Verified end-to-end against a real independent MCP client (Lantern
+core's own `StdioMCPClient`, launched as a genuine child process, not
+called as a Python object in-process) — see
+`tests/test_mcp_server_live_stdio.py`.
+
+To connect this server to an MCP host that reads a JSON config (e.g.
+Claude Desktop's `claude_desktop_config.json`, or Claude Code's
+`.mcp.json`), add an entry like:
+
+```json
+{
+  "mcpServers": {
+    "lantern-harness": {
+      "command": "/absolute/path/to/lantern-babel-codex-bridge/.venv/bin/lantern-harness-mcp",
+      "env": {
+        "LANTERN_MCP_DATA_DIR": "/absolute/path/to/wherever/you/want/this/node's/data"
+      }
+    }
+  }
+}
+```
+
+Use absolute paths — MCP hosts launch this as a subprocess and do not
+inherit your shell's working directory or `PATH` by default.
+
 ## Create a project
 
 `projects/` is a plain workspace directory for your own files. It is
