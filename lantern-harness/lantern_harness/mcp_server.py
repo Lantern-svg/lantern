@@ -22,6 +22,15 @@ Design constraints carried over from the rest of this harness:
 - Nothing here starts listening on a network port. run_stdio_async() is
   stdio-only, matching how Claude Desktop/Claude Code launch local MCP
   servers as a subprocess -- there is no bind/listen call in this file.
+- `lantern_evaluate_intent` composes observe -> compile -> confidence ->
+  decide (OperatingLoop.run() with no tool_name/tool_kwargs) for a host
+  agent environment (e.g. Odysseus) that owns its own action/execution
+  layer. It never accepts a tool_name/tool_kwargs argument from the
+  remote caller and therefore can never reach RealityBoundary.act --
+  the caller is expected to execute the recommended action in its own
+  environment and report the real-world result back via
+  lantern_observe, closing the loop without this server ever executing
+  anything on the caller's behalf.
 
 To run standalone (for local testing only, not a distribution action):
     python3 -m lantern_harness.mcp_server
@@ -134,6 +143,30 @@ def build_server(context: Optional[LanternMCPContext] = None) -> "MCPServer":
     @server.tool(description="Report real Chronicle integrity status (hash-chain verification). VALID does not mean claims are true, only that the record has not been silently altered.")
     def lantern_witness_integrity() -> dict:
         return ctx.bridge.witness_integrity()
+
+    @server.tool(
+        description=(
+            "Run the read-only portion of Lantern's OperatingLoop for a host "
+            "agent environment (observe -> compile -> confidence -> decide). "
+            "Never accepts a tool name and never executes or authorizes any "
+            "action -- the calling agent environment (e.g. Odysseus) owns "
+            "its own action/execution layer and should call this before "
+            "acting, then report the real result back via lantern_observe."
+        )
+    )
+    def lantern_evaluate_intent(
+        intent: str,
+        concept: Optional[str] = None,
+        source: str = "external-agent",
+        reliability: float = 1.0,
+    ) -> dict:
+        result = ctx.loop.run(
+            intent,
+            concept=concept,
+            source=source,
+            reliability=reliability,
+        )
+        return result.to_dict()
 
     return server
 

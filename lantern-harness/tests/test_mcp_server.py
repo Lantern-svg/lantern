@@ -35,7 +35,7 @@ def test_server_exposes_expected_tool_names():
     expected = {
         "lantern_observe", "lantern_add_evidence", "lantern_confidence", "lantern_decide",
         "lantern_compile", "lantern_self_model", "lantern_branch_open", "lantern_spine_read",
-        "lantern_witness_integrity",
+        "lantern_witness_integrity", "lantern_evaluate_intent",
     }
     assert expected.issubset(names)
 
@@ -133,3 +133,36 @@ def test_build_server_raises_clear_error_when_sdk_unavailable(monkeypatch):
         raise AssertionError("expected RuntimeError")
     except RuntimeError as exc:
         assert "mcp" in str(exc)
+
+
+def test_lantern_evaluate_intent_runs_the_real_operating_loop():
+    """For a host agent environment (e.g. Odysseus) that owns its own
+    action layer: proves observe->compile->confidence->decide actually
+    executes and returns real, non-fabricated data -- not a stub."""
+    ctx = _fresh_context('evaluate-intent')
+    server = build_server(ctx)
+    before = ctx.bridge.status()["observations"]
+    result = _call(server, "lantern_evaluate_intent", {
+        "intent": "check whether the widget factory is still online",
+        "concept": "widget_factory_status",
+    })
+    after = ctx.bridge.status()["observations"]
+    assert after == before + 1, "evaluate_intent must record a real observation, not a fabricated one"
+    assert result["observation_id"]
+    assert result["confidence"]["concept"] == "widget_factory_status"
+    assert result["decision"]["authorization_status"] == "NOT_EVALUATED"
+    assert result["action_record"] is None, "evaluate_intent must never attempt an action itself"
+
+
+def test_lantern_evaluate_intent_has_no_tool_name_parameter():
+    """This tool must be structurally incapable of triggering an action
+    -- it must not accept a tool_name/tool_kwargs argument at all, not
+    merely default them to None. Inspecting the real registered schema,
+    not just behavior, so a future edit can't silently add one back."""
+    ctx = _fresh_context('evaluate-intent-schema')
+    server = build_server(ctx)
+    tools = asyncio.run(server.list_tools())
+    tool = next(t for t in tools if t.name == "lantern_evaluate_intent")
+    schema_props = set((tool.input_schema or {}).get("properties", {}).keys())
+    assert "tool_name" not in schema_props
+    assert "tool_kwargs" not in schema_props

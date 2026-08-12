@@ -200,6 +200,21 @@ Claude Desktop's `claude_desktop_config.json`, or Claude Code's
 Use absolute paths — MCP hosts launch this as a subprocess and do not
 inherit your shell's working directory or `PATH` by default.
 
+**Integrating with an agent environment that owns its own action
+layer** (e.g. [Odysseus](https://github.com/odysseus-dev/odysseus)):
+use `lantern_evaluate_intent` instead of the individual
+observe/confidence/decide tools. It runs the full read-only
+observe→compile→confidence→decide pipeline in one call and has no
+`tool_name`/`tool_kwargs` parameter at all, so it cannot trigger an
+action — the calling environment executes the recommended action
+itself (under its own authorization/tool-security gating) and reports
+the real result back via `lantern_observe`. See
+`ODYSSEUS_INTEGRATION.md` for a concrete, tested example: architecture
+investigation, license-compatibility analysis (Odysseus is
+AGPL-3.0-or-later; Lantern is MIT), and a real boundary-level test
+against Odysseus's actual (unmodified) MCP client code and its pinned
+`mcp<2` SDK version.
+
 ## Create a project
 
 `projects/` is a plain workspace directory for your own files. It is
