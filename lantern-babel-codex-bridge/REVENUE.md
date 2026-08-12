@@ -99,6 +99,25 @@ introduction/pricing/settlement funnel for when a real endpoint exists
 to advertise -- currently all-zero, honestly, because there is nothing
 live to discover yet.
 
+## Capability 6: MCP server distribution (free, adoption channel -- not itself revenue)
+
+Built this session: `lantern_harness.mcp_server` exposes 9 real
+Lantern harness tools (observe, add_evidence, confidence, decide,
+compile, self_model, branch_open, spine_read, witness_integrity) over
+the standard MCP stdio transport, `pip install lantern-harness[mcp]`,
+verified against a real independent MCP client
+(`tests/test_mcp_server_live_stdio.py`, launched as a genuine
+subprocess). This is **not a revenue path by itself** -- it is free,
+local-only, and deliberately excludes any tool that could execute an
+external action or accept payment. It matters for revenue only
+indirectly: it is the lowest-friction way for another agent developer
+to actually try Lantern (`pip install` + one JSON config entry, no
+server to run, no account, no payment), which is a prerequisite for
+any future paid capability having real users to reach. Recorded here
+so it isn't conflated with an actual monetizable capability -- it has
+no `settlement` field and never will while it stays scoped to
+epistemic primitives.
+
 ## Capability 5: GitHub Sponsors / other funding platforms
 
 Considered. Requires the operator to personally enroll in a funding
@@ -117,6 +136,7 @@ consideration.
 | Hosted multi-tenant service | NO | -- | #1's infra + multi-tenant isolation design |
 | Agent-to-agent via x402 | Same infra as #1 | -- | same as #1 |
 | GitHub Sponsors / funding platforms | N/A | -- | operator identity/financial enrollment |
+| MCP server (free distribution, not revenue) | YES | YES (14/14 across both mcp_server test files) | none -- already usable today |
 
 No revenue has occurred. No user has paid. No partnership exists. This
 document will be updated with real, dated entries only as real events
