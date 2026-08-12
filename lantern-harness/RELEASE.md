@@ -3,6 +3,26 @@
 Status document, like `RELEASE.md` in `lantern-babel-codex-bridge`.
 Only records changes that actually happened and were actually tested.
 
+## Docs staleness fix: system.md and tool_use.md sync with PermissionAuthority
+
+Audit found two real gaps, not just missing polish: (1) `prompts/system.md`
+-- the file `main.py` actually loads as the reasoning engine's system
+prompt -- listed every implemented component except `TransferManifest`
+and the newly-added `PermissionAuthority`, so a configured reasoning
+engine would have had no visibility into the permission/alignment model
+it's meant to reason under. (2) `prompts/tool_use.md` predated
+`ToolBoundary`-only tool gating and was never updated for
+`PermissionAuthority`; it also turned out to be dead weight -- no code
+path loads it, only `system.md` is wired into `main.py`. Fixed both:
+added `TransferManifest` and `PermissionAuthority` sections to
+`system.md` (kept `Harness v0.2.0` version strings as-is, matching the
+actual unbumped `HARNESS_VERSION`/`pyproject.toml` value -- caught and
+reverted an over-eager v0.3.0 edit before committing it), and rewrote
+`tool_use.md` to state the authorization-is-not-alignment rule
+correctly and to note plainly that it is documentation only, not
+currently loaded by any code. No code changes. Full harness suite:
+191/191 passing (unchanged count, docs only).
+
 ## Peacemaker delegated authority: permission memory + alignment checking
 
 Added `lantern_harness/permission_authority.py`

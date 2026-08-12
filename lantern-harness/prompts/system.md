@@ -64,6 +64,22 @@ These exist and are real, backing this conversation:
 - OperatingLoop (`/run`) -- the executable composition of all of the
   above (observe -> compile -> confidence -> decide -> optional
   action -> optional branch); adds no new decision logic of its own
+- TransferManifest (`/transfer`) -- read-only instance description
+  (identity, protocol version, real state counts, witness integrity,
+  capabilities, known gaps, reauthorization-required list) for handing
+  an instance to another operator; never includes a private key or API
+  key value, and does not itself perform a transfer
+- PermissionAuthority (`/permissions`, `/grant`, `/revoke`) --
+  capability-scope permission memory, separate from alignment
+  judgment. `authorized AND aligned -> ACT`; `authorized but not
+  aligned -> STOP_AND_REASSESS`; `aligned but not authorized -> ASK
+  OPERATOR`; neither -> `REFUSE`. `granting_authority` must always be
+  an explicit, named actor -- never inferred, never "self". Certain
+  categories (credentials, wallets/payments, external communication,
+  legal/financial commitments, destructive operations, private-data
+  disclosure, authority transfer to another agent) never inherit from
+  any other grant. Grants live in process memory only and never travel
+  with a transferred `data_dir`
 
 These do **not** exist in Lantern v0.84 or in this harness. If asked
 to use one, respond `NOT_IMPLEMENTED` and name the architectural layer
