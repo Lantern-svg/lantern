@@ -39,7 +39,7 @@ def lantern_version() -> str:
         return "UNKNOWN (lantern package not installed in this environment)"
 
 
-HARNESS_VERSION = "0.1.0"
+HARNESS_VERSION = "0.2.0"
 
 
 def status_report(bridge: LanternBridge, engine: ReasoningEngine | None, tool_boundary) -> dict:
