@@ -23,6 +23,7 @@ name happens to be requested.
 
 import tempfile
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 
@@ -30,10 +31,20 @@ from lantern.capability_authorization import CapabilityDecision
 from lantern.compass import orient
 from lantern.compression import CompressionViolation, compress_cycle
 from lantern.core import Lantern
-from lantern.mcp_client import StdioMCPClient, StdioServerTarget
+from lantern.mcp_client import MCP_SDK_AVAILABLE, StdioMCPClient, StdioServerTarget
 from lantern.mcp_integration import MCPExecutionRequest, MCPIntegrationBoundary
 from lantern.orchestration import create_default_registry
 
+
+_LOCAL_MCP_SERVER = Path("/home/ubuntu/self-improving/mcp_server.py")
+
+_requires_live_mcp_server = pytest.mark.skipif(
+    not MCP_SDK_AVAILABLE or not _LOCAL_MCP_SERVER.exists(),
+    reason=(
+        "requires the optional `mcp` extra (pip install .[mcp]) and a local "
+        "MCP test server that only exists on the maintainer's machine"
+    ),
+)
 
 MCP_SERVER_TARGET = StdioServerTarget(
     server_id="self-improving-memory",
@@ -43,6 +54,7 @@ MCP_SERVER_TARGET = StdioServerTarget(
 )
 
 
+@_requires_live_mcp_server
 def test_full_cycle_generalizes_to_a_second_independent_read_only_mcp_tool():
     # ---- OBSERVE ----
     lantern = Lantern()
