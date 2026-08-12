@@ -20,8 +20,13 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-# Set required env before importing service
+# Set required env before importing service.
+# LANTERN_FACILITATOR_URL is set here purely so service.py's own
+# startup check passes at import time -- every test below mocks the
+# facilitator HTTP boundary (verify/settle), it never actually reaches
+# this URL, so it does not need to be a live endpoint.
 os.environ["LANTERN_PAYMENT_RECIPIENT_EVM"] = "0x1234567890123456789012345678901234567890"
+os.environ.setdefault("LANTERN_FACILITATOR_URL", "https://x402.org/facilitator")
 
 import service
 from lantern import Lantern, LanternAgent

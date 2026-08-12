@@ -334,4 +334,30 @@ Status document for the v0.84 public release.
 - `[x]` Intended release scope limited to the seven new modules, their
   tests, and release metadata/docs.
 
+## 12. Post-v0.84: Service Layer Fix + Revenue Investigation (not a version bump)
 
+This section is **not** a new release. `service.py` lives at the repo
+root (deployment layer), not in `src/lantern/` (the versioned core
+library), so this change does not touch `__version__` or the v0.84 tag.
+
+- **Real defect found and fixed:** `service.py`'s default x402
+  facilitator URL (`https://x402.org/facilitator`, inherited from the
+  x402 SDK's own hardcoded default) was verified dead (HTTP 404, both
+  GET and POST) via a live check. The service previously would have
+  started successfully and then failed every real payment silently.
+  Fixed: `service.py` now either uses the real Coinbase CDP Facilitator
+  (if `CDP_API_KEY_ID`/`CDP_API_KEY_SECRET` are set), or a
+  caller-supplied `LANTERN_FACILITATOR_URL`, or refuses to start with an
+  explicit `CAPABILITY_REQUIRED` error -- never a silent dead default.
+- **Test fix:** `tests/test_service_integration.py` now sets
+  `LANTERN_FACILITATOR_URL` explicitly (to a real, resolvable -- if
+  presently non-functional-for-payment -- domain) so the module-level
+  startup check in `service.py` passes at import time; all facilitator
+  HTTP calls in these tests remain mocked, as before. 10/10 passing.
+- **New document:** `REVENUE.md` records the current state of every
+  investigated monetization path, what's built and tested, and exactly
+  what's still missing (wallet address, facilitator credentials,
+  explicit authorization to run a network-exposed service) before any
+  of them are `REVENUE_READY`. No revenue has occurred.
+- **Full suite re-verified after this change:** `698 passed, 0 failed`
+  (core), service integration `10 passed, 0 failed`.

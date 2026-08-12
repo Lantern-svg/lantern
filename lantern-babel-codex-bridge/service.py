@@ -23,9 +23,28 @@ Payment Flow:
     8. Reciprocity outcome recorded
 
 Configuration:
-    LANTERN_PAYMENT_RECIPIENT_EVM: operator wallet address
+    LANTERN_PAYMENT_RECIPIENT_EVM: operator wallet address (required)
     LANTERN_RECONCILIATION_PRICE: price in USD (e.g., "0.001")
-    LANTERN_FACILITATOR_URL: x402 facilitator (default: testnet)
+    LANTERN_FACILITATOR_URL: x402 facilitator base URL (optional --
+        only used if CDP credentials below are absent; the historical
+        default here, https://x402.org/facilitator, was found dead
+        (HTTP 404) during a live check in 2026-08 and is no longer
+        used as an implicit default. See CAPABILITY_REQUIRED below.)
+    CDP_API_KEY_ID / CDP_API_KEY_SECRET: Coinbase Developer Platform
+        API credentials for the real, production x402 facilitator
+        (per https://docs.cdp.coinbase.com/x402/seller/facilitator).
+        If both are present, the CDP Facilitator is used instead of
+        LANTERN_FACILITATOR_URL.
+
+CAPABILITY_REQUIRED (as of this revision):
+    Neither LANTERN_FACILITATOR_URL nor CDP_API_KEY_ID/SECRET are
+    configured in this environment, and LANTERN_PAYMENT_RECIPIENT_EVM
+    is unset. This service will refuse to start with a clear error
+    rather than silently pointing at a dead facilitator URL or
+    fabricating a wallet address. Launching this service for real
+    payments requires an operator to supply: (1) a real EVM wallet
+    address to receive funds, and (2) either a genuinely live
+    facilitator URL or CDP API credentials. See README/RELEASE notes.
 """
 
 import os
@@ -51,7 +70,9 @@ from lantern.reciprocity import create_outcome
 # Configuration from environment
 PAYMENT_RECIPIENT_EVM = os.getenv("LANTERN_PAYMENT_RECIPIENT_EVM", "")
 RECONCILIATION_PRICE = os.getenv("LANTERN_RECONCILIATION_PRICE", "$0.001")
-FACILITATOR_URL = os.getenv("LANTERN_FACILITATOR_URL", "https://x402.org/facilitator")
+FACILITATOR_URL = os.getenv("LANTERN_FACILITATOR_URL", "")
+CDP_API_KEY_ID = os.getenv("CDP_API_KEY_ID", "")
+CDP_API_KEY_SECRET = os.getenv("CDP_API_KEY_SECRET", "")
 TESTNET_NETWORK = "eip155:84532"  # Base Sepolia
 
 
@@ -106,10 +127,43 @@ app = FastAPI(
 
 
 # x402 Payment Setup
+#
+# This block intentionally raises a clear, named error instead of
+# silently defaulting to a facilitator URL. The historical default
+# (https://x402.org/facilitator) was verified dead (HTTP 404 on both
+# GET and POST) in 2026-08 -- using it silently would make the service
+# appear configured while every real payment attempt failed.
 if not PAYMENT_RECIPIENT_EVM:
-    raise ValueError("LANTERN_PAYMENT_RECIPIENT_EVM must be set")
+    raise ValueError(
+        "LANTERN_PAYMENT_RECIPIENT_EVM must be set to a real EVM wallet address. "
+        "This service will not fabricate or default to a placeholder wallet."
+    )
 
-facilitator = HTTPFacilitatorClient({"url": FACILITATOR_URL})
+if CDP_API_KEY_ID and CDP_API_KEY_SECRET:
+    # Real production path: Coinbase Developer Platform Facilitator.
+    # See https://docs.cdp.coinbase.com/x402/seller/facilitator
+    try:
+        from cdp.x402 import create_facilitator_config
+    except ImportError as exc:
+        raise RuntimeError(
+            "CDP_API_KEY_ID/CDP_API_KEY_SECRET are set but the 'cdp-sdk' package "
+            "is not installed. Install it (pip install cdp-sdk) to use the CDP Facilitator."
+        ) from exc
+    facilitator = HTTPFacilitatorClient(create_facilitator_config())
+elif FACILITATOR_URL:
+    # Caller-supplied facilitator URL. Not verified reachable by this
+    # module at import time -- if it is unreachable, payment
+    # verification will fail per-request rather than at startup.
+    facilitator = HTTPFacilitatorClient({"url": FACILITATOR_URL})
+else:
+    raise RuntimeError(
+        "CAPABILITY_REQUIRED: no x402 facilitator is configured. Set either "
+        "(CDP_API_KEY_ID and CDP_API_KEY_SECRET) for the real Coinbase CDP "
+        "Facilitator, or LANTERN_FACILITATOR_URL for a self-hosted/alternate "
+        "facilitator. This service refuses to start with a fabricated or dead "
+        "default -- see the module docstring's CAPABILITY_REQUIRED note."
+    )
+
 payment_server = x402ResourceServer(facilitator)
 payment_server.register(TESTNET_NETWORK, ExactEvmScheme())
 
