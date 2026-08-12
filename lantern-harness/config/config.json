@@ -1,0 +1,11 @@
+{
+  "reasoning_engine": {
+    "provider": "none",
+    "model": null,
+    "ollama_host": "http://localhost:11434",
+    "api_key_env": null
+  },
+  "node_id": "lantern-harness-node",
+  "data_dir": "memory/lantern_data",
+  "output_profile": "concise"
+}
