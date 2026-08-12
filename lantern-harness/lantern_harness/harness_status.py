@@ -78,6 +78,7 @@ def status_report(bridge: LanternBridge, engine: ReasoningEngine | None, tool_bo
         "self_model_status": "IMPLEMENTED (lantern_harness.self_model.SelfModel -- read-only self-description; has no method capable of granting itself authorization, see test_self_model_cannot_self_authorize)",
         "operating_loop_status": "IMPLEMENTED (lantern_harness.operating_loop.OperatingLoop -- composes Observation/PromptCompiler/ConfidenceField/DecisionStateMachine/RealityBoundary/Branch into one callable pipeline; adds no new decision logic of its own)",
         "transfer_manifest_status": "IMPLEMENTED (lantern_harness.transfer_manifest.build_manifest -- read-only instance description: identity/protocol/state-summary/capabilities/gaps/reauthorization-required; never includes a private key or API key value; does not itself perform a transfer)",
+        "permission_authority_status": "IMPLEMENTED (lantern_harness.permission_authority.PermissionAuthority -- capability-scope permission memory + alignment combination per the PEACEMAKER delegated-authority directive; grants held in-process memory only, never persisted, so authority never travels with a transferred data_dir; see /permissions, /grant, /revoke)",
     }
 
 
@@ -112,4 +113,5 @@ def format_status_report(report: dict) -> str:
     lines.append(f"Self-Model: {report['self_model_status']}")
     lines.append(f"Operating Loop: {report['operating_loop_status']}")
     lines.append(f"Transfer Manifest: {report['transfer_manifest_status']}")
+    lines.append(f"Permission Authority: {report['permission_authority_status']}")
     return "\n".join(lines)

@@ -25,8 +25,9 @@ from lantern_harness.self_model import SelfModel
 from lantern_harness.spine import BranchStore, SpineCommitter
 from lantern_harness.operating_loop import OperatingLoop
 from lantern_harness.transfer_manifest import build_manifest
+from lantern_harness.permission_authority import PermissionAuthority, CAPABILITY_CATEGORIES
 
-COMMANDS = ("/memory", "/history", "/beliefs", "/evidence", "/branches", "/identity", "/tools", "/projects", "/status", "/compile", "/decide", "/self", "/branch", "/spine", "/run", "/transfer", "/new", "/exit")
+COMMANDS = ("/memory", "/history", "/beliefs", "/evidence", "/branches", "/identity", "/tools", "/projects", "/status", "/compile", "/decide", "/self", "/branch", "/spine", "/run", "/transfer", "/permissions", "/grant", "/revoke", "/new", "/exit")
 
 SYSTEM_PROMPT_PATH = Path(__file__).resolve().parent / "prompts" / "system.md"
 
@@ -96,7 +97,7 @@ def handle_command(command: str, bridge, engine, tool_boundary) -> str:
     return f"unknown command: {command}"
 
 
-def handle_stateful_command(command: str, bridge, tool_boundary, branch_store, loop, engine=None) -> str | None:
+def handle_stateful_command(command: str, bridge, tool_boundary, branch_store, loop, engine=None, permission_authority=None) -> str | None:
     """Commands that need state that persists across turns (open
     branches, the OperatingLoop's compiled components). Kept separate
     from handle_command so that function stays a pure per-call dispatch.
@@ -145,10 +146,62 @@ def handle_stateful_command(command: str, bridge, tool_boundary, branch_store, l
         manifest = build_manifest(bridge, engine=engine)
         return manifest.format()
 
+    if command == "/permissions":
+        if permission_authority is None:
+            return "PERMISSIONS: no PermissionAuthority is wired into this session"
+        active = permission_authority.active_grants()
+        if not active:
+            return "permissions: 0 active grants -- nothing is pre-authorized in this session; every consequential action outside an existing grant will ask"
+        lines = [f"permissions: {len(active)} active grant(s)"]
+        for g in active:
+            lines.append(f"  - [{g.version}] capability={g.capability!r} scope={g.scope!r} granted_by={g.granting_authority!r} boundary={g.boundary!r}")
+        return "\n".join(lines)
+
+    if command.startswith("/grant"):
+        request = command[len("/grant"):].strip()
+        if not request or "::" not in request:
+            return (
+                "usage: /grant <capability> :: <scope> :: <your name/identifier>  "
+                f"(capability must be one of: {', '.join(CAPABILITY_CATEGORIES)})"
+            )
+        parts = [p.strip() for p in request.split("::")]
+        if len(parts) != 3:
+            return "usage: /grant <capability> :: <scope> :: <your name/identifier> -- granting_authority must be stated explicitly, it is never inferred"
+        capability, scope, granting_authority = parts
+        if permission_authority is None:
+            return "PERMISSIONS: no PermissionAuthority is wired into this session"
+        try:
+            grant = permission_authority.grant(
+                capability=capability,
+                scope=scope,
+                boundary="",
+                granting_authority=granting_authority,
+                provenance="REPL /grant command",
+            )
+        except ValueError as exc:
+            return f"GRANT_REFUSED: {exc}"
+        return f"[granted] capability={grant.capability!r} scope={grant.scope!r} granted_by={grant.granting_authority!r} version={grant.version}"
+
+    if command.startswith("/revoke"):
+        request = command[len("/revoke"):].strip()
+        if not request or "::" not in request:
+            return "usage: /revoke <capability> :: <your name/identifier>"
+        parts = [p.strip() for p in request.split("::")]
+        if len(parts) != 2:
+            return "usage: /revoke <capability> :: <your name/identifier>"
+        capability, granting_authority = parts
+        if permission_authority is None:
+            return "PERMISSIONS: no PermissionAuthority is wired into this session"
+        try:
+            count = permission_authority.revoke(capability, granting_authority)
+        except ValueError as exc:
+            return f"REVOKE_REFUSED: {exc}"
+        return f"[revoked] capability={capability!r} count={count}"
+
     return None
 
 
-def run_repl(bridge, engine, tool_boundary, branch_store, loop):
+def run_repl(bridge, engine, tool_boundary, branch_store, loop, permission_authority):
     system_prompt = load_system_prompt()
     history = [{"role": "system", "content": system_prompt}] if system_prompt else []
 
@@ -160,7 +213,7 @@ def run_repl(bridge, engine, tool_boundary, branch_store, loop):
             continue
 
         if line.startswith("/"):
-            stateful_result = handle_stateful_command(line, bridge, tool_boundary, branch_store, loop, engine=engine)
+            stateful_result = handle_stateful_command(line, bridge, tool_boundary, branch_store, loop, engine=engine, permission_authority=permission_authority)
             if stateful_result is not None:
                 print(stateful_result)
                 print("You:", end=" ", flush=True)
@@ -204,9 +257,10 @@ def main():
     tool_boundary = ToolBoundary()
     branch_store = BranchStore()
     loop = OperatingLoop(bridge, tool_boundary)
+    permission_authority = PermissionAuthority()
 
     print()
-    run_repl(bridge, engine, tool_boundary, branch_store, loop)
+    run_repl(bridge, engine, tool_boundary, branch_store, loop, permission_authority)
     return 0
 
 

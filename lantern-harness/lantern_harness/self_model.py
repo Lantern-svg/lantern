@@ -46,6 +46,8 @@ KNOWN_CAPABILITIES = (
     "record real vs. simulated external actions (RealityBoundary)",
     "verify Chronicle integrity (real Chronicle.verify() hash-chain check)",
     "create and persist Scars (real Lantern.create_scar/persist_scar)",
+    "remember capability-scope permission grants and combine them with an alignment result "
+    "(PermissionAuthority) -- in-process memory only, never persisted, never self-granted",
 )
 
 KNOWN_GAPS = (

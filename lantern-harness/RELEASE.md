@@ -3,6 +3,42 @@
 Status document, like `RELEASE.md` in `lantern-babel-codex-bridge`.
 Only records changes that actually happened and were actually tested.
 
+## Peacemaker delegated authority: permission memory + alignment checking
+
+Added `lantern_harness/permission_authority.py`
+(`PermissionAuthority`/`PermissionGrant`/`AlignmentResult`/
+`PermissionCheckResult`), per the PEACEMAKER DELEGATED AUTHORITY,
+ALIGNMENT, AND PERMISSION MEMORY directive: capability-scope permission
+memory (not per-command approval) combined with a separately-produced
+alignment judgment, using the directive's own rule -- authorized AND
+aligned -> ACT; authorized but misaligned -> STOP_AND_REASSESS; aligned
+but not authorized -> ASK_OPERATOR; neither -> REFUSE. Grants require
+an explicit, non-empty `granting_authority` (no self-grant code path
+exists) and are held in process memory only, never persisted to
+`data_dir`/Chronicle/any file, so authority never silently travels with
+a transferred instance (consistent with "Transfer an instance" and the
+directive's own Transfer Behavior section). External-authority
+categories (credentials, wallets, payments, communications,
+legal/financial commitments, destructive operations, private-data
+disclosure, authority transfer to another agent) never inherit from
+any other grant. Wired into `main.py` as `/permissions`, `/grant`,
+`/revoke`, matching the existing `/branch`/`/spine` REPL patterns; new
+`permission_authority_status` field in `harness_status.py`; new
+capability line added to `SelfModel.KNOWN_CAPABILITIES` (reused by
+`TransferManifest`, not duplicated); new README "Permissions and
+alignment" section. 22 new unit tests
+(`tests/test_permission_authority.py`) + 5 new REPL subprocess tests
+(`tests/test_conversation_loop.py`) + 1 new status test
+(`tests/test_harness_status.py`). Full harness suite: 191/191 passing.
+Real REPL smoke test performed against a disposable `data_dir`: zero
+grants by default, `/grant` records with the typed name as
+`granting_authority`, unknown capability categories are refused,
+`/revoke` removes the active grant. This milestone stops here per the
+directive's explicit stop condition -- no PyPI publish, no push, no
+outreach, no new alignment-judgment engine (that remains the caller's
+responsibility, same separation of concerns as `RealityBoundary`
+taking an already-made `DecisionReading`).
+
 ## Peacemaker identity naming (same 0.3.0 session, after transfer readiness)
 
 Added `PEACEMAKER.md`: names the personal, transferable *instance*

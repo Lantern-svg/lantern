@@ -90,3 +90,13 @@ def test_status_report_transfer_manifest_reported_as_implemented():
     assert "IMPLEMENTED" in report["transfer_manifest_status"]
     text = format_status_report(report)
     assert "Transfer Manifest:" in text
+
+
+def test_status_report_permission_authority_reported_as_implemented():
+    tmp = Path(tempfile.mkdtemp())
+    bridge = LanternBridge(tmp, node_id="status-test-permissions")
+    report = status_report(bridge, None, ToolBoundary())
+    assert "IMPLEMENTED" in report["permission_authority_status"]
+    assert "never persisted" in report["permission_authority_status"]
+    text = format_status_report(report)
+    assert "Permission Authority:" in text

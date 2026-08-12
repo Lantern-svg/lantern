@@ -76,10 +76,11 @@ def test_system_prompt_is_actually_sent_to_the_reasoning_engine(monkeypatch):
     from lantern_harness.tools.boundary import ToolBoundary
     from lantern_harness.spine import BranchStore
     from lantern_harness.operating_loop import OperatingLoop
+    from lantern_harness.permission_authority import PermissionAuthority
 
     monkeypatch.setattr(sys, "stdin", io.StringIO("hello there\n/exit\n"))
     tool_boundary = ToolBoundary()
-    main_mod.run_repl(bridge, FakeEngine(), tool_boundary, BranchStore(), OperatingLoop(bridge, tool_boundary))
+    main_mod.run_repl(bridge, FakeEngine(), tool_boundary, BranchStore(), OperatingLoop(bridge, tool_boundary), PermissionAuthority())
 
     assert len(captured_messages) == 1
     first_call = captured_messages[0]
@@ -144,3 +145,43 @@ def test_run_command_with_no_intent_shows_usage():
     result = _run_main("/run\n/exit\n")
     assert "usage: /run" in result.stdout
 
+
+
+def test_permissions_command_reports_zero_active_grants_by_default():
+    """A fresh process must start with no standing authority -- per
+    the PEACEMAKER directive's Transfer Behavior, permission memory is
+    never assumed, never inherited, never pre-populated."""
+    result = _run_main("/permissions\n/exit\n")
+    assert "permissions: 0 active grants" in result.stdout
+
+
+def test_grant_command_requires_explicit_granting_authority():
+    result = _run_main("/grant local_file_modification :: lantern-harness/ ::\n/exit\n")
+    assert "usage: /grant" in result.stdout or "GRANT_REFUSED" in result.stdout
+
+
+def test_grant_then_permissions_shows_the_new_grant():
+    result = _run_main(
+        "/grant local_file_modification :: lantern-harness project directory :: test-operator\n"
+        "/permissions\n/exit\n"
+    )
+    assert "[granted]" in result.stdout
+    assert "capability='local_file_modification'" in result.stdout
+    assert "permissions: 1 active grant(s)" in result.stdout
+    assert "granted_by='test-operator'" in result.stdout
+
+
+def test_grant_rejects_unknown_capability_from_the_repl():
+    result = _run_main("/grant not_a_real_capability :: some scope :: test-operator\n/exit\n")
+    assert "GRANT_REFUSED" in result.stdout
+
+
+def test_revoke_command_removes_an_active_grant():
+    result = _run_main(
+        "/grant run_tests :: lantern-harness test suite :: test-operator\n"
+        "/revoke run_tests :: test-operator\n"
+        "/permissions\n/exit\n"
+    )
+    assert "[revoked]" in result.stdout
+    assert "count=1" in result.stdout
+    assert "permissions: 0 active grants" in result.stdout

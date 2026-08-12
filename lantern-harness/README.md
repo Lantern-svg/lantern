@@ -117,7 +117,8 @@ print(format_bootstrap_report(bootstrap()))
 
 `/status` `/memory` `/identity` `/tools` `/branches` `/compile <request>`
 `/decide <request>` `/self` `/branch <concept> :: <hypothesis>` `/spine`
-`/run <intent>` `/transfer` `/exit`
+`/run <intent>` `/transfer` `/permissions` `/grant <capability> :: <scope> :: <you>`
+`/revoke <capability> :: <you>` `/exit`
 
 - `/compile <request>` runs the Prompt Compiler
   (`lantern_harness.prompt_compiler`) and prints a structured
@@ -150,6 +151,23 @@ print(format_bootstrap_report(bootstrap()))
   anything -- to actually hand off an instance, copy its `data_dir`
   (see "Transfer an instance" below) and share this manifest's output
   alongside it.
+- `/permissions` lists currently active capability-scope grants
+  (`lantern_harness.permission_authority.PermissionAuthority`). A fresh
+  session always starts with zero grants -- nothing is pre-authorized,
+  and grants never travel with a transferred `data_dir` (they live in
+  process memory only, on purpose; see "Permissions and alignment"
+  below).
+- `/grant <capability> :: <scope> :: <your name>` records a new
+  capability-scope permission. `granting_authority` (your name/
+  identifier) is required and never inferred -- omitting it refuses the
+  grant. `<capability>` must be one of the defined categories (see
+  `lantern_harness.permission_authority.CAPABILITY_CATEGORIES`);
+  external-authority categories (credentials, wallets, payments,
+  communications, legal/financial commitments, destructive operations,
+  private-data disclosure, authority transfer to another agent) never
+  inherit from any other grant, no matter how similar the wording.
+- `/revoke <capability> :: <your name>` marks all active grants for
+  that capability as revoked.
 
 (`/history`, `/beliefs`, `/evidence`, `/projects` are recognized but
 not yet implemented as formatted views in this version — see
@@ -361,12 +379,73 @@ the receiving operator** (this is exactly the `TransferManifest`'s
   state itself is in-process only and does not persist in `data_dir`,
   so a receiving process starts with zero tools authorized regardless
   of what the sending instance had authorized
+- any `PermissionAuthority` capability-scope grant (see "Permissions
+  and alignment" below) -- like `ToolBoundary`, its state is in-process
+  memory only, so a receiving operator always starts with zero grants,
+  never the sending operator's
 
 The identity's public key travels (it is not a secret and is exactly
 what lets a third party verify this is the *same* instance across a
 transfer); the private key travels only because it lives in the copied
 `data_dir` -- treat that copy step as a credential handoff, not a
 routine file copy.
+
+## Permissions and alignment
+
+A running instance does not require the operator to approve every
+ordinary action one at a time. The operator may grant standing
+authority over a defined **capability category** -- for example,
+"modify files inside this project directory" -- and the instance may
+then act within that scope without asking again for each individual
+file. This is `lantern_harness.permission_authority.PermissionAuthority`.
+
+Two things stay separate, and both are required before an action
+proceeds:
+
+- **Authorization** -- is this capability category in scope, per an
+  active `PermissionGrant`?
+- **Alignment** -- does this specific action actually fit the
+  operator's stated objective, current task, and known boundaries?
+
+Authorization is not alignment, and alignment is not authorization.
+Combining them gives four outcomes:
+
+| Authorized? | Aligned? | Result |
+|---|---|---|
+| yes | yes | **ACT** -- proceed, and notify the operator afterward if the action was consequential |
+| yes | no | **STOP_AND_REASSESS** -- an existing grant does not override a failed or uncertain alignment check |
+| no | yes | **ASK_OPERATOR** -- a `NEW AUTHORITY REQUEST` is raised, stating the action, why, the capability required, foreseeable external effects, and what (if any) existing authorization applies |
+| no | no | **REFUSE** |
+
+`PermissionAuthority` owns the scope memory and the combination rule
+above; it does not itself judge alignment (`AlignmentResult` is
+produced by whatever is reasoning about the request -- the operator or
+the reasoning engine -- and passed in, the same way `RealityBoundary`
+takes an already-made `DecisionReading` as input rather than computing
+one itself).
+
+Grants are `capability` + `scope` + `boundary` + `granting_authority` +
+`provenance` + `version` + `status` (+ optional `expires_at_step` /
+`conditions`) -- never a single opaque yes/no. `granting_authority`
+must always be an explicit, non-empty string; there is no code path
+that lets this module default it to something like `"self"` (see
+`test_permission_authority_cannot_self_grant`). Certain capability
+categories -- credential use, wallet/payment authority, external
+communication, legal/financial commitments, destructive operations,
+private-data disclosure, and authority transfer to another agent --
+never inherit from any other grant, no matter how similar the wording
+(e.g. authorization to modify local files never implies authorization
+to send an external message).
+
+Grants are held in this process's memory only, never written to
+`data_dir`, Chronicle, or any file. This is deliberate: per "Transfer
+an instance" above, authority must never silently travel with
+transferred state. Every new process -- including a freshly transferred
+instance -- starts with zero grants and must be re-authorized by
+whoever is actually operating it now.
+
+Use `/permissions`, `/grant`, and `/revoke` from the REPL (see
+"Commands" above) to inspect and manage grants interactively.
 
 ## Known limitations
 
