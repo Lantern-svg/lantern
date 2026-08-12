@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lantern-harness"
+version = "0.2.0"
+description = "Provider-agnostic human-facing conversation harness for the Lantern evidence/belief engine (lantern-babel-codex-bridge). Adds Prompt Compiler, Perspective Differential, Confidence Field, Decision State Machine, Branch/Spine, Self-Model, and Reality Boundary layers on top of Lantern's real APIs, without duplicating Lantern's internals."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+    { name = "Lantern project" },
+]
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+]
+ollama = [
+    "httpx>=0.24.0",
+]
+openai = [
+    "httpx>=0.24.0",
+]
+anthropic = [
+    "httpx>=0.24.0",
+]
+google = [
+    "httpx>=0.24.0",
+]
+
+[project.scripts]
+lantern-harness = "main:main"
+
+[tool.setuptools]
+py-modules = ["main"]
+
+[tool.setuptools.packages.find]
+include = ["lantern_harness*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

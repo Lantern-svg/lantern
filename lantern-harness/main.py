@@ -21,8 +21,11 @@ from lantern_harness.confidence_field import ConfidenceField
 from lantern_harness.decision_state_machine import DecisionStateMachine
 from lantern_harness.reasoning.base import ReasoningEngineUnavailable
 from lantern_harness.tools.boundary import ToolBoundary
+from lantern_harness.self_model import SelfModel
+from lantern_harness.spine import BranchStore, SpineCommitter
+from lantern_harness.operating_loop import OperatingLoop
 
-COMMANDS = ("/memory", "/history", "/beliefs", "/evidence", "/branches", "/identity", "/tools", "/projects", "/status", "/compile", "/decide", "/new", "/exit")
+COMMANDS = ("/memory", "/history", "/beliefs", "/evidence", "/branches", "/identity", "/tools", "/projects", "/status", "/compile", "/decide", "/self", "/branch", "/spine", "/run", "/new", "/exit")
 
 SYSTEM_PROMPT_PATH = Path(__file__).resolve().parent / "prompts" / "system.md"
 
@@ -92,7 +95,55 @@ def handle_command(command: str, bridge, engine, tool_boundary) -> str:
     return f"unknown command: {command}"
 
 
-def run_repl(bridge, engine, tool_boundary):
+def handle_stateful_command(command: str, bridge, tool_boundary, branch_store, loop) -> str | None:
+    """Commands that need state that persists across turns (open
+    branches, the OperatingLoop's compiled components). Kept separate
+    from handle_command so that function stays a pure per-call dispatch.
+    Returns None if the command is not one of these."""
+    if command == "/self":
+        model = SelfModel(bridge, tool_boundary)
+        return model.describe().format()
+
+    if command.startswith("/branch"):
+        request = command[len("/branch"):].strip()
+        if not request:
+            open_ids = [b.id for b in branch_store.all() if b.status == "OPEN"]
+            return f"usage: /branch <concept> :: <hypothesis>  |  open branches: {open_ids or 'none'}"
+        if "::" not in request:
+            return "usage: /branch <concept> :: <hypothesis>"
+        concept, hypothesis = (part.strip() for part in request.split("::", 1))
+        branch = branch_store.open_branch(concept=concept, hypothesis=hypothesis)
+        return f"[branch opened] id={branch.id} concept={branch.concept!r} status={branch.status} -- outside committed Spine state until an explicit /spine commit"
+
+    if command.startswith("/spine"):
+        request = command[len("/spine"):].strip()
+        if not request:
+            committer = SpineCommitter(bridge)
+            entries = committer.read_spine()
+            if not entries:
+                return "spine: 0 committed entries"
+            lines = [f"spine: {len(entries)} committed entries"]
+            for entry in entries:
+                lines.append(f"  - [{entry.id}] concept={entry.concept!r} statement={entry.statement!r}")
+            return "\n".join(lines)
+        return (
+            "SPINE_NOT_COMMITTED: this REPL command intentionally cannot authorize a commit on your behalf. "
+            "A branch cannot commit itself and no confidence score alone may create commitment "
+            "(see lantern_harness.spine.SpineCommitter.commit's required authorized=True parameter). "
+            "Use SpineCommitter directly from a script where you, the operator, explicitly pass authorized=True."
+        )
+
+    if command.startswith("/run"):
+        intent = command[len("/run"):].strip()
+        if not intent:
+            return "usage: /run <intent> -- runs the full operating loop (observe -> compile -> confidence -> decision), never executes a tool without prior ToolBoundary authorization"
+        result = loop.run(intent)
+        return result.format()
+
+    return None
+
+
+def run_repl(bridge, engine, tool_boundary, branch_store, loop):
     system_prompt = load_system_prompt()
     history = [{"role": "system", "content": system_prompt}] if system_prompt else []
 
@@ -104,6 +155,11 @@ def run_repl(bridge, engine, tool_boundary):
             continue
 
         if line.startswith("/"):
+            stateful_result = handle_stateful_command(line, bridge, tool_boundary, branch_store, loop)
+            if stateful_result is not None:
+                print(stateful_result)
+                print("You:", end=" ", flush=True)
+                continue
             result = handle_command(line, bridge, engine, tool_boundary)
             if result == "__EXIT__":
                 return
@@ -141,9 +197,11 @@ def main():
 
     engine = result["engine"]
     tool_boundary = ToolBoundary()
+    branch_store = BranchStore()
+    loop = OperatingLoop(bridge, tool_boundary)
 
     print()
-    run_repl(bridge, engine, tool_boundary)
+    run_repl(bridge, engine, tool_boundary, branch_store, loop)
     return 0
 
 

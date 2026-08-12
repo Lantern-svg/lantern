@@ -30,7 +30,10 @@ Lantern's own state.
 
 ## Install
 
-Requires Python >= 3.10.
+Requires Python >= 3.10. `lantern-harness` is a real, pip-installable
+package (`pyproject.toml`) with a console entry point (`lantern-harness`);
+this has been verified against a fresh throwaway venv, not just the
+development checkout.
 
 ```bash
 git clone <this-repo>
@@ -38,11 +41,29 @@ cd lantern-babel-codex-bridge
 python3 -m venv .venv
 .venv/bin/pip install -e ".[dev]"
 cd ../lantern-harness
+../lantern-babel-codex-bridge/.venv/bin/pip install -e ".[dev]"
 ../lantern-babel-codex-bridge/.venv/bin/python -m pytest tests/ -q
 ```
 
 If `lantern` is not importable, `main.py` will report exactly that and
 stop — it will not fabricate a working session.
+
+## Try the demo
+
+`examples/demo_operating_loop.py` runs the full operating loop
+end-to-end against a real, disposable Lantern node (a fresh temp
+directory) -- every line it prints is produced by real code, nothing is
+hardcoded:
+
+```bash
+../lantern-babel-codex-bridge/.venv/bin/python examples/demo_operating_loop.py
+```
+
+It walks through: an ordinary question with no evidence (LOW
+confidence), adding two independent agreeing observations (confidence
+rises to MEDIUM), opening an exploratory branch, a refused Spine commit
+(no authorization) followed by a real authorized commit, and a final
+Self-Model report.
 
 ## Choose a model
 
@@ -88,12 +109,32 @@ print(format_bootstrap_report(bootstrap()))
 
 ## Commands
 
-`/status` `/memory` `/identity` `/tools` `/branches` `/compile <request>` `/exit`
+`/status` `/memory` `/identity` `/tools` `/branches` `/compile <request>`
+`/decide <request>` `/self` `/branch <concept> :: <hypothesis>` `/spine`
+`/run <intent>` `/exit`
 
-`/compile <request>` runs the Prompt Compiler (`lantern_harness.prompt_compiler`)
-on your text and prints a structured investigation prompt you can hand to
-any reasoning engine -- it does not send the request anywhere itself.
-Missing information is marked `NOT_PROVIDED` / `UNKNOWN`, never invented.
+- `/compile <request>` runs the Prompt Compiler
+  (`lantern_harness.prompt_compiler`) and prints a structured
+  investigation prompt -- it does not send the request anywhere itself.
+  Missing information is marked `NOT_PROVIDED` / `UNKNOWN`, never invented.
+- `/decide <request>` computes a real `ConfidenceField` reading and a
+  `DecisionStateMachine` recommendation. It recommends; it never
+  authorizes or executes.
+- `/self` prints a `SelfModel` report: WHAT I KNOW / INFER / DO NOT KNOW
+  / CAN DO / CANNOT DO / AM AUTHORIZED TO DO / REQUIRES OPERATOR ACTION.
+  It has no method capable of granting itself authority.
+- `/branch <concept> :: <hypothesis>` opens a real exploratory `Branch`
+  (`lantern_harness.spine.BranchStore`). Branches stay outside committed
+  Spine state until an explicit commit succeeds.
+- `/spine` lists currently committed Spine entries (reconstructed by
+  replaying the real Chronicle). The REPL intentionally cannot commit a
+  branch for you -- `SpineCommitter.commit()` requires an explicit
+  `authorized=True` passed by a caller outside this module, so a branch
+  can never authorize its own commitment and no confidence score alone
+  can create one.
+- `/run <intent>` executes the full `OperatingLoop`: records a real
+  Observation, compiles a structured prompt, computes a Confidence Field
+  reading, and gets a Decision State Machine recommendation, in one call.
 
 (`/history`, `/beliefs`, `/evidence`, `/projects` are recognized but
 not yet implemented as formatted views in this version — see
@@ -128,10 +169,52 @@ The Confidence Field and Decision State Machine are real, testable layers in thi
   verification (`Chronicle.verify()`). `VALID` means the recorded
   sequence has not been silently altered — it does **not** mean the
   underlying claims are true.
-- **Branches / Spine / Commitment**, a **Self-Model**, a **Perspective
-  Mesh**, and a dedicated **RealityBoundary** class do not exist in
-  Lantern v0.84 or in this harness. This harness reports them as
-  `NOT_IMPLEMENTED` rather than simulating them.
+- **Branches / Spine / Commitment** (`lantern_harness.spine`) is a real,
+  tested layer built on Lantern's Chronicle. `BranchStore` manages
+  exploratory `Branch` objects (concept, hypothesis, linked
+  observations/evidence, OPEN/COMMITTED/ABANDONED status).
+  `SpineCommitter.commit()` enforces every invariant the mission
+  requires: refuses unless `authorized=True` is explicitly passed by an
+  external caller (a branch can never commit itself, and no confidence
+  score alone creates commitment), refuses if the branch is not OPEN,
+  refuses on Chronicle integrity failure, and refuses on unresolved
+  contradictions for the branch's concept unless the caller explicitly
+  acknowledges them. Committed entries are immutable (no re-commit, no
+  abandon after commit) and are reconstructed by replaying the real
+  Chronicle (`SpineCommitter.read_spine()`), the same pattern Lantern
+  uses for Scars. Abandoned or never-committed branches can be converted
+  into real Scars (`spine.branch_to_scar`) so failed hypotheses are
+  preserved as learning artifacts rather than discarded. **Lantern v0.84
+  core itself still has no branch/spine concept** -- see
+  `LanternBridge.branches()`, which still honestly raises
+  `NotImplementedError`.
+- **Self-Model** (`lantern_harness.self_model.SelfModel`) is a real,
+  read-only reporting layer. `describe()` returns the seven sections the
+  mission specifies (WHAT I KNOW / INFER / DO NOT KNOW / CAN DO / CANNOT
+  DO / AM AUTHORIZED TO DO / REQUIRES OPERATOR ACTION), sourced from the
+  real bridge/Chronicle/ToolBoundary state. It exposes no method capable
+  of granting itself or anything else authorization -- enforced by
+  `test_self_model_cannot_self_authorize`, which asserts the class has
+  no `authorize`/`grant`/`approve`/`enable`/`unlock` method at all.
+- **Reality Boundary** (`lantern_harness.reality_boundary.RealityBoundary`)
+  separates INTENT -> DECISION -> AUTHORIZATION -> ACTION -> RESULT.
+  `propose()` never touches the external world. `act()` only executes
+  through an already-authorized `ToolBoundary` entry. `simulate()` can
+  never report `SUCCESS` -- its result is always `SIMULATED_ONLY` and
+  its notes are always prefixed `SIMULATED_BY_ASSISTANT:`. An
+  `ActionRecord.is_real_success()` requires both
+  `execution_mode == REAL` and `result_status == SUCCESS`; a simulated
+  result can never read as real by construction, not just by convention.
+- **Operating Loop** (`lantern_harness.operating_loop.OperatingLoop`)
+  composes the above into one callable pipeline (Observation ->
+  PromptCompiler -> ConfidenceField -> DecisionStateMachine ->
+  RealityBoundary -> optional Branch), matching the architecture in the
+  mission brief. It adds no new decision, confidence, or authorization
+  logic of its own -- it only calls the existing, separately-tested
+  components in sequence. Reachable from the REPL via `/run <intent>`.
+- A full **Perspective Mesh** (merge/vote/consensus across perspectives)
+  still does not exist -- only the variance-only
+  `PerspectiveDifferentialEngine` described below.
 - **Confidence Field** (`lantern_harness.confidence_field.ConfidenceField`)
   is a verified read-only layer over Lantern evidence, contradictions,
   integrity, scars, and optional perspective divergence. It produces a

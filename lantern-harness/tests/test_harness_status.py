@@ -22,12 +22,25 @@ def test_status_report_reflects_actual_bridge_state():
     assert report["reasoning_engine"]["provider"] is None
 
 
-def test_status_report_labels_unimplemented_concepts_honestly():
+def test_status_report_labels_spine_and_reality_boundary_as_implemented_harness_additions():
+    """Branch/Spine and RealityBoundary were added this harness turn as
+    real, tested code (lantern_harness.spine, lantern_harness.reality_boundary).
+    Lantern v0.84 core itself still has neither -- the report must say so
+    without claiming the harness addition doesn't exist."""
     tmp = Path(tempfile.mkdtemp())
     bridge = LanternBridge(tmp, node_id="status-test-2")
     report = status_report(bridge, None, ToolBoundary())
-    assert "NOT_IMPLEMENTED" in report["branching_status"]
-    assert "NOT_IMPLEMENTED" in report["reality_boundary_status"]
+    assert "IMPLEMENTED" in report["branching_status"]
+    assert "Lantern v0.84 core itself still has no branch" in report["branching_status"]
+    assert "IMPLEMENTED" in report["reality_boundary_status"]
+
+
+def test_status_report_self_model_and_operating_loop_reported_as_implemented():
+    tmp = Path(tempfile.mkdtemp())
+    bridge = LanternBridge(tmp, node_id="status-test-2d")
+    report = status_report(bridge, None, ToolBoundary())
+    assert "IMPLEMENTED" in report["self_model_status"]
+    assert "IMPLEMENTED" in report["operating_loop_status"]
 
 
 def test_status_report_perspective_engine_is_labeled_partial_not_full_mesh():
@@ -55,3 +68,5 @@ def test_format_status_report_produces_readable_text():
     text = format_status_report(report)
     assert "LANTERN STATUS" in text
     assert "Reasoning Engine: NOT_CONFIGURED" in text
+    assert "Self-Model:" in text
+    assert "Operating Loop:" in text

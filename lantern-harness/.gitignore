@@ -3,3 +3,4 @@ __pycache__/
 .pytest_cache/
 memory/lantern_data/
 logs/*.log
+*.egg-info/

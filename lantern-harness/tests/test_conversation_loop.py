@@ -74,9 +74,12 @@ def test_system_prompt_is_actually_sent_to_the_reasoning_engine(monkeypatch):
             return {"provider": "fake", "model": "fake-model", "available": True, "detail": "fake"}
 
     from lantern_harness.tools.boundary import ToolBoundary
+    from lantern_harness.spine import BranchStore
+    from lantern_harness.operating_loop import OperatingLoop
 
     monkeypatch.setattr(sys, "stdin", io.StringIO("hello there\n/exit\n"))
-    main_mod.run_repl(bridge, FakeEngine(), ToolBoundary())
+    tool_boundary = ToolBoundary()
+    main_mod.run_repl(bridge, FakeEngine(), tool_boundary, BranchStore(), OperatingLoop(bridge, tool_boundary))
 
     assert len(captured_messages) == 1
     first_call = captured_messages[0]
@@ -99,4 +102,45 @@ def test_compile_command_with_no_request_shows_usage():
 def test_compile_command_lightweight_for_ordinary_question():
     result = _run_main("/compile What is the boiling point of water?\n/exit\n")
     assert "[compiled, mode=lightweight]" in result.stdout
+
+def test_self_command_reports_seven_sections():
+    result = _run_main("/self\n/exit\n")
+    assert "SELF-MODEL" in result.stdout
+    assert "WHAT I KNOW" in result.stdout
+    assert "WHAT I AM AUTHORIZED TO DO" in result.stdout
+    assert "WHAT REQUIRES OPERATOR ACTION" in result.stdout
+
+
+def test_branch_command_opens_a_real_branch():
+    result = _run_main("/branch widgets :: widgets sell well\n/exit\n")
+    assert "[branch opened]" in result.stdout
+    assert "concept='widgets'" in result.stdout
+
+
+def test_branch_command_without_double_colon_shows_usage():
+    result = _run_main("/branch just some text\n/exit\n")
+    assert "usage: /branch" in result.stdout
+
+
+def test_spine_command_with_no_entries_reports_zero():
+    result = _run_main("/spine\n/exit\n")
+    assert "spine: 0 committed entries" in result.stdout
+
+
+def test_spine_command_never_authorizes_a_commit_from_the_repl():
+    result = _run_main("/branch widgets :: widgets sell well\n/spine fake-id widgets sell well\n/exit\n")
+    assert "SPINE_NOT_COMMITTED" in result.stdout
+    assert "cannot authorize a commit" in result.stdout
+
+
+def test_run_command_executes_the_full_operating_loop():
+    result = _run_main("/run should we trust this data?\n/exit\n")
+    assert "OPERATING LOOP RESULT" in result.stdout
+    assert "confidence:" in result.stdout
+    assert "decision:" in result.stdout
+
+
+def test_run_command_with_no_intent_shows_usage():
+    result = _run_main("/run\n/exit\n")
+    assert "usage: /run" in result.stdout
 
