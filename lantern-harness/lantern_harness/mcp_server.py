@@ -56,6 +56,7 @@ from .operating_loop import OperatingLoop
 from .prompt_compiler import PromptCompiler
 from .self_model import SelfModel
 from .spine import BranchStore, SpineCommitter
+from .transfer_manifest import build_manifest
 from .tools.boundary import ToolBoundary
 
 
@@ -167,6 +168,21 @@ def build_server(context: Optional[LanternMCPContext] = None) -> "MCPServer":
             reliability=reliability,
         )
         return result.to_dict()
+
+    @server.tool(
+        description=(
+            "Report a Transfer Manifest describing this Lantern instance: "
+            "identity (public key only), protocol/harness version, real "
+            "state counts, real witness integrity status, capabilities, "
+            "known gaps, and what a receiving operator must explicitly "
+            "re-authorize (credentials, network exposure, MCP host "
+            "registration, paid capabilities). Never includes a private "
+            "key, API key value, or any other credential. Does not by "
+            "itself transfer anything -- it only describes the instance."
+        )
+    )
+    def lantern_transfer_manifest() -> dict:
+        return build_manifest(ctx.bridge).to_dict()
 
     return server
 

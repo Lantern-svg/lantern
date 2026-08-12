@@ -77,6 +77,7 @@ def status_report(bridge: LanternBridge, engine: ReasoningEngine | None, tool_bo
         "reality_boundary_status": "IMPLEMENTED (lantern_harness.reality_boundary.RealityBoundary -- INTENT/DECISION/AUTHORIZATION/ACTION/RESULT separation; REAL vs SIMULATED execution_mode is mutually exclusive by construction, see ActionRecord.is_real_success())",
         "self_model_status": "IMPLEMENTED (lantern_harness.self_model.SelfModel -- read-only self-description; has no method capable of granting itself authorization, see test_self_model_cannot_self_authorize)",
         "operating_loop_status": "IMPLEMENTED (lantern_harness.operating_loop.OperatingLoop -- composes Observation/PromptCompiler/ConfidenceField/DecisionStateMachine/RealityBoundary/Branch into one callable pipeline; adds no new decision logic of its own)",
+        "transfer_manifest_status": "IMPLEMENTED (lantern_harness.transfer_manifest.build_manifest -- read-only instance description: identity/protocol/state-summary/capabilities/gaps/reauthorization-required; never includes a private key or API key value; does not itself perform a transfer)",
     }
 
 
@@ -110,4 +111,5 @@ def format_status_report(report: dict) -> str:
     lines.append(f"Reality Boundary: {report['reality_boundary_status']}")
     lines.append(f"Self-Model: {report['self_model_status']}")
     lines.append(f"Operating Loop: {report['operating_loop_status']}")
+    lines.append(f"Transfer Manifest: {report['transfer_manifest_status']}")
     return "\n".join(lines)

@@ -111,7 +111,7 @@ print(format_bootstrap_report(bootstrap()))
 
 `/status` `/memory` `/identity` `/tools` `/branches` `/compile <request>`
 `/decide <request>` `/self` `/branch <concept> :: <hypothesis>` `/spine`
-`/run <intent>` `/exit`
+`/run <intent>` `/transfer` `/exit`
 
 - `/compile <request>` runs the Prompt Compiler
   (`lantern_harness.prompt_compiler`) and prints a structured
@@ -135,6 +135,15 @@ print(format_bootstrap_report(bootstrap()))
 - `/run <intent>` executes the full `OperatingLoop`: records a real
   Observation, compiles a structured prompt, computes a Confidence Field
   reading, and gets a Decision State Machine recommendation, in one call.
+- `/transfer` prints a `TransferManifest`: identity (public key only),
+  protocol/harness version, real state counts, real witness integrity
+  status, capabilities, known gaps, and an explicit list of what a
+  receiving operator must decide fresh (credentials, network exposure,
+  MCP host registration, paid capabilities). It never includes a
+  private key or API key value, and it does not itself transfer
+  anything -- to actually hand off an instance, copy its `data_dir`
+  (see "Transfer an instance" below) and share this manifest's output
+  alongside it.
 
 (`/history`, `/beliefs`, `/evidence`, `/projects` are recognized but
 not yet implemented as formatted views in this version — see
@@ -165,7 +174,8 @@ Lantern *act as* an MCP server.
 Exposed tools: `lantern_observe`, `lantern_add_evidence`,
 `lantern_confidence`, `lantern_decide`, `lantern_compile`,
 `lantern_self_model`, `lantern_branch_open`, `lantern_spine_read`,
-`lantern_witness_integrity`. Every tool is a thin wrapper around an
+`lantern_witness_integrity`, `lantern_evaluate_intent`,
+`lantern_transfer_manifest`. Every tool is a thin wrapper around an
 already-tested component -- no new decision/confidence/authorization
 logic exists in this module. Deliberately **not** exposed: anything
 that would let a remote MCP client execute an arbitrary
@@ -306,6 +316,51 @@ The Confidence Field and Decision State Machine are real, testable layers in thi
   diverges most. It is **not** the full Perspective Mesh / Decision
   State Machine from the architecture roadmap -- it does not merge,
   vote, or select a winner. Variance is a diagnostic signal, not proof.
+
+## Transfer an instance
+
+A Lantern Harness instance is more than a package name -- it has real
+identity, real accumulated evidence, and a real integrity chain. To
+hand an instance to another operator or agent:
+
+1. Run `/transfer` (or call the `lantern_transfer_manifest` MCP tool)
+   and save its output. This is the receiving side's answer to "what
+   am I being given?" -- identity, protocol version, real state
+   counts, real witness integrity status, capabilities, known gaps.
+2. Copy the instance's `data_dir` (default `memory/lantern_data/`) to
+   the new location. This directory holds the real Chronicle
+   (`chronicle.jsonl`) and the real node identity (`identity/`,
+   including the private key file, mode `0600`). Copy it the same way
+   you'd copy any credential-bearing directory -- outside version
+   control, over a channel you trust.
+3. On the receiving side, re-run `/transfer` (or `lantern_witness_integrity`)
+   against the copied `data_dir` and confirm `witness_integrity: VALID`
+   before trusting the transferred state. A copy that fails integrity
+   verification should not be adopted silently.
+
+**What does NOT travel with the data_dir, and must be decided fresh by
+the receiving operator** (this is exactly the `TransferManifest`'s
+`reauthorization_required` list, not a separate policy):
+
+- reasoning engine credentials (API keys are never stored in `data_dir`
+  or in any Chronicle/evidence record -- see `lantern_harness.config`)
+- any x402 payment/wallet credentials
+- authorization to push commits, publish packages, or contact external
+  parties on the new operator's behalf
+- registration with any MCP host (e.g. adding this instance to an
+  Odysseus deployment) -- the private key proves *which* instance this
+  is, it does not imply the new operator has decided to expose it
+  anywhere
+- authorization for any `ToolBoundary`-registered tool -- `ToolBoundary`
+  state itself is in-process only and does not persist in `data_dir`,
+  so a receiving process starts with zero tools authorized regardless
+  of what the sending instance had authorized
+
+The identity's public key travels (it is not a secret and is exactly
+what lets a third party verify this is the *same* instance across a
+transfer); the private key travels only because it lives in the copied
+`data_dir` -- treat that copy step as a credential handoff, not a
+routine file copy.
 
 ## Known limitations
 

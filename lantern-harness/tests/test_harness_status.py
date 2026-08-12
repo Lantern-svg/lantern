@@ -81,3 +81,12 @@ def test_status_report_mcp_server_status_reflects_real_sdk_availability():
         assert "NOT_AVAILABLE" not in report["mcp_server_status"]
     except ImportError:
         assert "NOT_AVAILABLE" in report["mcp_server_status"]
+
+
+def test_status_report_transfer_manifest_reported_as_implemented():
+    tmp = Path(tempfile.mkdtemp())
+    bridge = LanternBridge(tmp, node_id="status-test-transfer")
+    report = status_report(bridge, None, ToolBoundary())
+    assert "IMPLEMENTED" in report["transfer_manifest_status"]
+    text = format_status_report(report)
+    assert "Transfer Manifest:" in text

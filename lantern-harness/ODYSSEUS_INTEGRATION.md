@@ -215,6 +215,20 @@ already covers the new tool name (`evaluate_intent` doesn't match any
 forbidden substring, verified). Full harness suite: 149/149 passing
 after this addition.
 
+**Also added (LANTERN COMPLETION -> PROMOTION -> TRANSFER mission,
+same session, after this integration was already tested)**:
+`lantern_transfer_manifest`, a new read-only tool that reports a
+`TransferManifest` -- identity (public key only), protocol/harness
+version, real state counts, real witness integrity status,
+capabilities, known gaps, and an explicit `reauthorization_required`
+list a receiving operator must decide fresh. Directly relevant here:
+if a Lantern instance is ever handed to a different operator who then
+registers it with their own Odysseus deployment, `lantern_transfer_manifest`
+is how that operator can verify what they actually received before
+trusting it -- see the harness `README.md`'s "Transfer an instance"
+section and `lantern_harness/transfer_manifest.py`. Full harness suite
+after this addition: 162/162 passing.
+
 ## 7. How to register Lantern with a real Odysseus instance
 
 Once Odysseus is running (native or Docker) and you're logged in as
@@ -230,12 +244,13 @@ posts to `POST /api/mcp/servers`):
 | `args` | `[]` |
 | `env` | `{"LANTERN_MCP_DATA_DIR": "/absolute/path/to/this/node's/lantern/data"}` |
 
-After connecting, Odysseus will list Lantern's 10 tools
-(`mcp__lantern-harness__lantern_observe`, `..._evaluate_intent`, etc.)
--- admin-only by default per Odysseus's own `mcp__`-prefix blocking
-for non-admins (§2). No Lantern-side change is required to respect
-that; it's enforced entirely on Odysseus's side, consistent with
-Lantern never assuming authorization it wasn't explicitly given.
+After connecting, Odysseus will list Lantern's 11 tools
+(`mcp__lantern-harness__lantern_observe`, `..._evaluate_intent`,
+`..._transfer_manifest`, etc.) -- admin-only by default per Odysseus's
+own `mcp__`-prefix blocking for non-admins (§2). No Lantern-side
+change is required to respect that; it's enforced entirely on
+Odysseus's side, consistent with Lantern never assuming authorization
+it wasn't explicitly given.
 
 ## 8. Summary
 
@@ -246,7 +261,7 @@ Lantern never assuming authorization it wasn't explicitly given.
 | Agent/MCP/tool/memory interfaces identified | DONE |
 | Safest integration boundary identified | DONE -- external MCP stdio server, adapter pattern |
 | License compatibility analysis | DONE (engineering analysis, not legal advice -- see §4) |
-| New capability built | `lantern_evaluate_intent` tool, 2 new tests, 149/149 harness suite passing |
+| New capability built | `lantern_evaluate_intent` and `lantern_transfer_manifest` tools, 14 new tests total, 162/162 harness suite passing |
 | Real boundary-level test (real v1 client, real subprocess, real v2 server) | DONE, passed |
 | Full live Odysseus instance test | NOT_TESTED -- blocked on Docker/native install + explicit run authorization |
 | Distribution/promotion of this integration | Documented here; no announcement, PR, or outreach to the Odysseus project has occurred |

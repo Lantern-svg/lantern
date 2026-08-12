@@ -38,7 +38,7 @@ def _fresh_target(name: str) -> StdioServerTarget:
     )
 
 
-def test_real_stdio_subprocess_lists_all_nine_tools():
+def test_real_stdio_subprocess_lists_all_expected_tools():
     target = _fresh_target("discover")
     client = StdioMCPClient(target)
     discovery = client.discover()
@@ -46,7 +46,7 @@ def test_real_stdio_subprocess_lists_all_nine_tools():
     expected = {
         "lantern_observe", "lantern_add_evidence", "lantern_confidence", "lantern_decide",
         "lantern_compile", "lantern_self_model", "lantern_branch_open", "lantern_spine_read",
-        "lantern_witness_integrity",
+        "lantern_witness_integrity", "lantern_evaluate_intent", "lantern_transfer_manifest",
     }
     assert expected.issubset(tool_names)
 

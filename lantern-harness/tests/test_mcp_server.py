@@ -35,7 +35,7 @@ def test_server_exposes_expected_tool_names():
     expected = {
         "lantern_observe", "lantern_add_evidence", "lantern_confidence", "lantern_decide",
         "lantern_compile", "lantern_self_model", "lantern_branch_open", "lantern_spine_read",
-        "lantern_witness_integrity", "lantern_evaluate_intent",
+        "lantern_witness_integrity", "lantern_evaluate_intent", "lantern_transfer_manifest",
     }
     assert expected.issubset(names)
 
@@ -166,3 +166,18 @@ def test_lantern_evaluate_intent_has_no_tool_name_parameter():
     schema_props = set((tool.input_schema or {}).get("properties", {}).keys())
     assert "tool_name" not in schema_props
     assert "tool_kwargs" not in schema_props
+
+
+def test_lantern_transfer_manifest_reports_real_state_and_no_secrets():
+    ctx = _fresh_context('transfer-manifest')
+    server = build_server(ctx)
+    ctx.bridge.observe("a real observation", source="test")
+    result = _call(server, "lantern_transfer_manifest", {})
+    assert result["identity"]["node_id"]
+    assert result["identity"]["public_key"]
+    assert result["state_summary"]["observations"] == 1
+    assert result["witness_integrity"]["status"] in ("VALID", "INVALID", "NO_CHRONICLE", "ERROR")
+    assert len(result["reauthorization_required"]) > 0
+    payload = str(result)
+    assert "private_key" not in payload
+    assert "signing_key" not in payload

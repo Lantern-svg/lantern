@@ -24,8 +24,9 @@ from lantern_harness.tools.boundary import ToolBoundary
 from lantern_harness.self_model import SelfModel
 from lantern_harness.spine import BranchStore, SpineCommitter
 from lantern_harness.operating_loop import OperatingLoop
+from lantern_harness.transfer_manifest import build_manifest
 
-COMMANDS = ("/memory", "/history", "/beliefs", "/evidence", "/branches", "/identity", "/tools", "/projects", "/status", "/compile", "/decide", "/self", "/branch", "/spine", "/run", "/new", "/exit")
+COMMANDS = ("/memory", "/history", "/beliefs", "/evidence", "/branches", "/identity", "/tools", "/projects", "/status", "/compile", "/decide", "/self", "/branch", "/spine", "/run", "/transfer", "/new", "/exit")
 
 SYSTEM_PROMPT_PATH = Path(__file__).resolve().parent / "prompts" / "system.md"
 
@@ -95,7 +96,7 @@ def handle_command(command: str, bridge, engine, tool_boundary) -> str:
     return f"unknown command: {command}"
 
 
-def handle_stateful_command(command: str, bridge, tool_boundary, branch_store, loop) -> str | None:
+def handle_stateful_command(command: str, bridge, tool_boundary, branch_store, loop, engine=None) -> str | None:
     """Commands that need state that persists across turns (open
     branches, the OperatingLoop's compiled components). Kept separate
     from handle_command so that function stays a pure per-call dispatch.
@@ -140,6 +141,10 @@ def handle_stateful_command(command: str, bridge, tool_boundary, branch_store, l
         result = loop.run(intent)
         return result.format()
 
+    if command == "/transfer":
+        manifest = build_manifest(bridge, engine=engine)
+        return manifest.format()
+
     return None
 
 
@@ -155,7 +160,7 @@ def run_repl(bridge, engine, tool_boundary, branch_store, loop):
             continue
 
         if line.startswith("/"):
-            stateful_result = handle_stateful_command(line, bridge, tool_boundary, branch_store, loop)
+            stateful_result = handle_stateful_command(line, bridge, tool_boundary, branch_store, loop, engine=engine)
             if stateful_result is not None:
                 print(stateful_result)
                 print("You:", end=" ", flush=True)
