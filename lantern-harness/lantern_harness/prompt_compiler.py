@@ -56,9 +56,22 @@ class CompiledPrompt:
     fields: dict = field(default_factory=dict)
     text: str = ""
     notes: list = field(default_factory=list)
+    concept: str | None = None
+    perspectives: tuple = field(default_factory=tuple)
+    assumptions: tuple = field(default_factory=tuple)
+    validation_status: str = "UNVERIFIED"
 
     def to_dict(self) -> dict:
-        return {"mode": self.mode, "fields": self.fields, "text": self.text, "notes": self.notes}
+        return {
+            "mode": self.mode,
+            "fields": self.fields,
+            "text": self.text,
+            "notes": self.notes,
+            "concept": self.concept,
+            "perspectives": [p.to_dict() for p in self.perspectives],
+            "assumptions": list(self.assumptions),
+            "validation_status": self.validation_status,
+        }
 
 
 class PromptCompiler:
@@ -82,6 +95,8 @@ class PromptCompiler:
         constraints: Optional[list] = None,
         authorization: Optional[list] = None,
         assumptions: Optional[list] = None,
+        perspectives: Optional[list] = None,
+        validation_status: Optional[str] = None,
         uncertainties: Optional[list] = None,
         alternative_explanations: Optional[list] = None,
         alternatives_to_action: Optional[list] = None,
@@ -153,7 +168,16 @@ class PromptCompiler:
                 fields["AUTHORIZATION"] = authorization
 
         text = self._render(mode, fields)
-        return CompiledPrompt(mode=mode, fields=fields, text=text, notes=notes)
+        return CompiledPrompt(
+            mode=mode,
+            fields=fields,
+            text=text,
+            notes=notes,
+            concept=concept,
+            perspectives=tuple(perspectives or ()),
+            assumptions=tuple(assumptions or ()),
+            validation_status=validation_status or "UNVERIFIED",
+        )
 
     def _read_bridge_state(self, concept: Optional[str]):
         if self.bridge is None or concept is None:

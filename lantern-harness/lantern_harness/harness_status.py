@@ -61,7 +61,9 @@ def status_report(bridge: LanternBridge, engine: ReasoningEngine | None, tool_bo
         "mcp_status": "NOT_CONNECTED (harness does not auto-connect an MCP server; see EXTERNAL_BOOTSTRAP.md in lantern-babel-codex-bridge for lantern.mcp_client usage)",
         "branching_status": "NOT_IMPLEMENTED (Lantern v0.84 has no branch/spine/commitment model)",
         "prompt_compiler_status": "IMPLEMENTED (lantern_harness.prompt_compiler.PromptCompiler -- newly added this harness turn, not part of Lantern v0.84 core)",
-        "perspective_engine_status": "PARTIAL: lantern_harness.perspective_differential.PerspectiveDifferentialEngine is a newly-added, narrow variance calculator over caller-supplied Perspective records (NOT part of Lantern v0.84 core, NOT the full Perspective Mesh / Decision State Machine roadmap item -- no merge/vote/consensus logic exists)",
+        "perspective_engine_status": "PARTIAL: lantern_harness.perspective_differential.PerspectiveDifferentialEngine is a newly-added, narrow variance calculator over caller-supplied Perspective records (NOT part of Lantern v0.84 core, NOT the full Perspective Mesh roadmap item -- no merge/vote/consensus logic exists)",
+        "confidence_field_status": "IMPLEMENTED (lantern_harness.confidence_field.ConfidenceField -- read-only scoring layer over existing Lantern evidence/contradiction/integrity state)",
+        "decision_state_machine_status": "IMPLEMENTED (lantern_harness.decision_state_machine.DecisionStateMachine -- explicit state/recommendation layer that never authorizes or executes)",
         "validation_status": "PARTIAL (EvidenceKernel.belief() sigmoid scoring + contradiction detection are real; no separate weighted-threshold ValidationEngine class exists)",
         "reality_boundary_status": "NOT_IMPLEMENTED (no dedicated RealityBoundary class in Lantern v0.84; this harness does not fabricate one)",
     }
@@ -89,6 +91,8 @@ def format_status_report(report: dict) -> str:
     lines.append(f"Branches / Spine: {report['branching_status']}")
     lines.append(f"Prompt Compiler: {report['prompt_compiler_status']}")
     lines.append(f"Perspective Differential: {report['perspective_engine_status']}")
+    lines.append(f"Confidence Field: {report['confidence_field_status']}")
+    lines.append(f"Decision State Machine: {report['decision_state_machine_status']}")
     lines.append(f"MCP: {report['mcp_status']}")
     lines.append(f"Tools: discovered={report['tools']['discovered']}, authorized={report['tools']['authorized']}")
     lines.append(f"Reality Boundary: {report['reality_boundary_status']}")

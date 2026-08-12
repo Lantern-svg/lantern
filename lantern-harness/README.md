@@ -114,6 +114,13 @@ epistemic state of its own.
 
 ## Understand evidence / validation
 
+Decision pipeline:
+
+Evidence -> Confidence Field -> Decision State Machine -> Capability Authorization -> Action Boundary
+
+The Confidence Field and Decision State Machine are real, testable layers in this harness. They recommend; they do not authorize or execute.
+
+
 - **Observation** -> **Evidence** -> **belief()** is real and
   implemented (`lantern.core.EvidenceKernel`), reachable through
   `LanternBridge.observe()` / `.add_evidence()` / `.belief()`.
@@ -121,11 +128,19 @@ epistemic state of its own.
   verification (`Chronicle.verify()`). `VALID` means the recorded
   sequence has not been silently altered — it does **not** mean the
   underlying claims are true.
-- **Branches / Spine / Commitment**, a **Self-Model**, a **Confidence
-  Field**, a **Decision State Machine**, and a dedicated
-  **RealityBoundary** class do not exist in Lantern v0.84 or in this
-  harness. This harness reports them as `NOT_IMPLEMENTED` rather than
-  simulating them.
+- **Branches / Spine / Commitment**, a **Self-Model**, a **Perspective
+  Mesh**, and a dedicated **RealityBoundary** class do not exist in
+  Lantern v0.84 or in this harness. This harness reports them as
+  `NOT_IMPLEMENTED` rather than simulating them.
+- **Confidence Field** (`lantern_harness.confidence_field.ConfidenceField`)
+  is a verified read-only layer over Lantern evidence, contradictions,
+  integrity, scars, and optional perspective divergence. It produces a
+  confidence band plus reasons/blockers/missing information.
+- **Decision State Machine**
+  (`lantern_harness.decision_state_machine.DecisionStateMachine`) is a
+  verified recommendation layer over the Confidence Field. It maps
+  confidence into a state and action recommendation, but it does not
+  authorize or execute anything.
 - **Prompt Compiler** (`lantern_harness.prompt_compiler.PromptCompiler`)
   is newly added in this harness (not part of Lantern v0.84 core). It
   turns a request into a structured prompt, scaling between a light and

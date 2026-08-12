@@ -17,10 +17,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from lantern_harness.bootstrap import bootstrap, format_bootstrap_report
 from lantern_harness.harness_status import format_status_report, status_report
 from lantern_harness.prompt_compiler import PromptCompiler
+from lantern_harness.confidence_field import ConfidenceField
+from lantern_harness.decision_state_machine import DecisionStateMachine
 from lantern_harness.reasoning.base import ReasoningEngineUnavailable
 from lantern_harness.tools.boundary import ToolBoundary
 
-COMMANDS = ("/memory", "/history", "/beliefs", "/evidence", "/branches", "/identity", "/tools", "/projects", "/status", "/compile", "/new", "/exit")
+COMMANDS = ("/memory", "/history", "/beliefs", "/evidence", "/branches", "/identity", "/tools", "/projects", "/status", "/compile", "/decide", "/new", "/exit")
 
 SYSTEM_PROMPT_PATH = Path(__file__).resolve().parent / "prompts" / "system.md"
 
@@ -35,6 +37,29 @@ def handle_command(command: str, bridge, engine, tool_boundary) -> str:
     if command == "/status":
         report = status_report(bridge, engine, tool_boundary)
         return format_status_report(report)
+    if command.startswith("/decide"):
+        request = command[len("/decide"):].strip()
+        if not request:
+            return "usage: /decide <your request> -- evaluates confidence and recommends a state, but does not authorize or execute"
+        compiler = PromptCompiler(bridge=bridge)
+        field = ConfidenceField(bridge=bridge)
+        machine = DecisionStateMachine()
+        compiled = compiler.compile(request)
+        reading = field.evaluate(concept=compiled.concept, perspectives=compiled.perspectives, assumptions=compiled.assumptions, validation_status=compiled.validation_status)
+        decision = machine.recommend(reading)
+        reason_lines = [f"- {reason}" for reason in decision.reasons] or ["- none"]
+        blocker_lines = [f"- {blocker}" for blocker in decision.blockers] or ["- none"]
+        change_lines = [f"- {item}" for item in decision.what_would_change_state] or ["- none"]
+        return "\n".join([
+            f"[decision, state={decision.state}, action={decision.recommended_action}]",
+            f"confidence={decision.confidence_score} band={decision.confidence_band}",
+            "reasons:",
+            *reason_lines,
+            "blockers:",
+            *blocker_lines,
+            "what_would_change_state:",
+            *change_lines,
+        ])
     if command.startswith("/compile"):
         request = command[len("/compile"):].strip()
         if not request:
