@@ -3,6 +3,24 @@
 Status document, like `RELEASE.md` in `lantern-babel-codex-bridge`.
 Only records changes that actually happened and were actually tested.
 
+## Docs staleness fix: PEACEMAKER.md and ODYSSEUS_INTEGRATION.md sync with PermissionAuthority/lantern_permissions
+
+Audit found PEACEMAKER.md's "carries" table and "sovereign" bullet
+listed every implemented delegated-authority-relevant guarantee except
+PermissionAuthority (it predates the module), and
+ODYSSEUS_INTEGRATION.md's "What was built this session" and summary
+table stopped at lantern_transfer_manifest, not mentioning
+lantern_permissions -- a real gap for the exact audience
+(Odysseus/MCP-host operators) that document exists for. Added a
+PermissionAuthority row to PEACEMAKER.md's carries table and named it
+explicitly in the "sovereign" bullet (grants held in process memory
+only, never in data_dir, zero standing grants on every transferred
+instance). Added a dated "Also added (PEACEMAKER delegated-authority
+phase...)" section to ODYSSEUS_INTEGRATION.md, matching its existing
+per-phase pattern, and updated its summary table's tool/test counts.
+No code changes. Full harness suite: 194/194 passing (unchanged count,
+docs only).
+
 ## Expose PermissionAuthority read-only over the MCP server (lantern_permissions)
 
 `lantern_harness/mcp_server.py` exposed `lantern_transfer_manifest` but

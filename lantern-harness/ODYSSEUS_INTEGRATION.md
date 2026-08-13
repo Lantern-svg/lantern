@@ -229,6 +229,29 @@ trusting it -- see the harness `README.md`'s "Transfer an instance"
 section and `lantern_harness/transfer_manifest.py`. Full harness suite
 after this addition: 162/162 passing.
 
+**Also added (PEACEMAKER delegated-authority phase, same session,
+after transfer readiness)**: `lantern_permissions`, a new read-only
+tool that reports this server process's currently active
+`PermissionAuthority` capability-scope grants
+(capability/scope/granting_authority/version). Relevant here because
+Odysseus is exactly the kind of remote MCP caller `PermissionAuthority`
+is designed to be legible to: before deciding how much to trust a
+recommendation from `lantern_evaluate_intent`, an Odysseus operator can
+call `lantern_permissions` to see what (if anything) this Lantern
+instance's process currently has standing scope over. Deliberately
+**no** `lantern_grant`/`lantern_revoke` MCP tool exists -- granting
+authority always requires a human-typed identifier at the harness's
+own REPL (`/grant`), never a value a remote MCP caller like Odysseus
+could supply on its own behalf
+(`test_server_exposes_no_grant_or_revoke_tool_over_mcp` enforces this
+structurally). Grants are in-process memory only and never persist
+across server restarts, so a freshly launched server -- including one
+just registered with a new Odysseus deployment -- always reports zero
+grants until a human explicitly runs `/grant`. See
+`lantern_harness/permission_authority.py` and the harness `README.md`'s
+"Permissions and alignment" section. Full harness suite after this
+addition: 194/194 passing.
+
 ## 7. How to register Lantern with a real Odysseus instance
 
 Once Odysseus is running (native or Docker) and you're logged in as
@@ -261,7 +284,7 @@ it wasn't explicitly given.
 | Agent/MCP/tool/memory interfaces identified | DONE |
 | Safest integration boundary identified | DONE -- external MCP stdio server, adapter pattern |
 | License compatibility analysis | DONE (engineering analysis, not legal advice -- see §4) |
-| New capability built | `lantern_evaluate_intent` and `lantern_transfer_manifest` tools, 14 new tests total, 162/162 harness suite passing |
+| New capability built | `lantern_evaluate_intent`, `lantern_transfer_manifest`, and `lantern_permissions` tools, 17 new tests total, 194/194 harness suite passing |
 | Real boundary-level test (real v1 client, real subprocess, real v2 server) | DONE, passed |
 | Full live Odysseus instance test | NOT_TESTED -- blocked on Docker/native install + explicit run authorization |
 | Distribution/promotion of this integration | Documented here; no announcement, PR, or outreach to the Odysseus project has occurred |

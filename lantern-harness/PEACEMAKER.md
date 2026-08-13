@@ -66,6 +66,7 @@ this document):
 | boundaries | `SelfModel.STANDING_OPERATOR_BOUNDARIES`, `ToolBoundary.is_authorized()` -- never inferred |
 | protocol / version info | `lantern.protocol.PROTOCOL_VERSION`, `lantern.__version__`, `HARNESS_VERSION` |
 | transfer information | `TransferManifest` itself, via `/transfer` or the `lantern_transfer_manifest` MCP tool |
+| delegated authority | `PermissionAuthority` -- capability-scope permission memory, combined with a separately-produced alignment judgment, via `/permissions`/`/grant`/`/revoke` or the read-only `lantern_permissions` MCP tool; grants live in process memory only and are never part of `data_dir` |
 
 It must always remain possible to tell apart:
 
@@ -112,7 +113,11 @@ A Peacemaker instance is therefore meant to behave as:
   those requires the *current* operator's explicit, fresh decision
   (`TransferManifest.reauthorization_required`,
   `DecisionStateMachine`'s `authorization_status` staying
-  `NOT_EVALUATED`, `SelfModel.describe()` never granting authority)
+  `NOT_EVALUATED`, `SelfModel.describe()` never granting authority,
+  `PermissionAuthority` grants held in process memory only and never
+  written to `data_dir` -- a transferred instance starts with zero
+  standing capability grants, always, and must be re-authorized by
+  whoever is carrying it now)
 - **useful when needed, dormant when not** -- with zero reasoning
   engine configured, the harness runs and reports
   `REASONING_ENGINE: NOT_CONFIGURED` honestly rather than failing or
