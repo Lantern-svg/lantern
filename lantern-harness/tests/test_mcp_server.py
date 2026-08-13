@@ -36,6 +36,7 @@ def test_server_exposes_expected_tool_names():
         "lantern_observe", "lantern_add_evidence", "lantern_confidence", "lantern_decide",
         "lantern_compile", "lantern_self_model", "lantern_branch_open", "lantern_spine_read",
         "lantern_witness_integrity", "lantern_evaluate_intent", "lantern_transfer_manifest",
+        "lantern_permissions",
     }
     assert expected.issubset(names)
 
@@ -181,3 +182,42 @@ def test_lantern_transfer_manifest_reports_real_state_and_no_secrets():
     payload = str(result)
     assert "private_key" not in payload
     assert "signing_key" not in payload
+
+
+def test_lantern_permissions_reports_zero_grants_by_default():
+    """A freshly constructed server process must start with zero
+    active PermissionAuthority grants -- authority never travels with
+    the process, only with an explicit human-typed REPL /grant."""
+    ctx = _fresh_context('permissions-default')
+    server = build_server(ctx)
+    result = _call(server, "lantern_permissions", {})
+    assert result["active_grant_count"] == 0
+    assert result["active_grants"] == []
+
+
+def test_lantern_permissions_reflects_a_real_in_process_grant():
+    ctx = _fresh_context('permissions-real-grant')
+    server = build_server(ctx)
+    ctx.permission_authority.grant(
+        capability="local_file_modification",
+        scope="test scope",
+        boundary="",
+        granting_authority="test-operator",
+        provenance="unit test",
+    )
+    result = _call(server, "lantern_permissions", {})
+    assert result["active_grant_count"] == 1
+    assert result["active_grants"][0]["capability"] == "local_file_modification"
+    assert result["active_grants"][0]["granting_authority"] == "test-operator"
+
+
+def test_server_exposes_no_grant_or_revoke_tool_over_mcp():
+    """granting_authority must always be an explicit human-typed
+    identifier (the REPL /grant pattern) -- a remote MCP caller must
+    never be able to grant or revoke a capability on its own behalf."""
+    ctx = _fresh_context('no-grant-revoke-tool')
+    server = build_server(ctx)
+    tools = asyncio.run(server.list_tools())
+    names = {t.name for t in tools}
+    assert "lantern_grant" not in names
+    assert "lantern_revoke" not in names

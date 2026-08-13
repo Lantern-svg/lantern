@@ -3,6 +3,29 @@
 Status document, like `RELEASE.md` in `lantern-babel-codex-bridge`.
 Only records changes that actually happened and were actually tested.
 
+## Expose PermissionAuthority read-only over the MCP server (lantern_permissions)
+
+`lantern_harness/mcp_server.py` exposed `lantern_transfer_manifest` but
+had no `PermissionAuthority` surface at all -- a real gap found during
+a routine audit, not manufactured work: any MCP host connected to this
+server (e.g. Odysseus) had no way to see this process's active
+capability-scope grants. Added `lantern_permissions`, a read-only tool
+listing active grants (capability/scope/granting_authority/version),
+following the exact same shape/rationale as `lantern_transfer_manifest`.
+Deliberately did **not** add `lantern_grant`/`lantern_revoke` MCP
+tools -- that would let a remote, non-human MCP caller supply its own
+`granting_authority` string and grant itself permissions, which
+directly contradicts the REPL `/grant` design (a human must type their
+own name at the keyboard). This is treated as a distinct, genuinely
+new authority boundary, not routine work, and was not built without
+being asked. `test_server_exposes_no_grant_or_revoke_tool_over_mcp`
+enforces the absence structurally, the same way
+`test_lantern_evaluate_intent_has_no_tool_name_parameter` already
+enforces `lantern_evaluate_intent`'s missing action parameter. 3 new
+tests (`tests/test_mcp_server.py`): zero-grants-by-default, reflects a
+real in-process grant, and the grant/revoke-tool-absence check. Full
+harness suite: 194/194 passing (up from 191).
+
 ## Docs staleness fix: system.md and tool_use.md sync with PermissionAuthority
 
 Audit found two real gaps, not just missing polish: (1) `prompts/system.md`

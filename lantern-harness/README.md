@@ -199,15 +199,23 @@ Exposed tools: `lantern_observe`, `lantern_add_evidence`,
 `lantern_confidence`, `lantern_decide`, `lantern_compile`,
 `lantern_self_model`, `lantern_branch_open`, `lantern_spine_read`,
 `lantern_witness_integrity`, `lantern_evaluate_intent`,
-`lantern_transfer_manifest`. Every tool is a thin wrapper around an
-already-tested component -- no new decision/confidence/authorization
-logic exists in this module. Deliberately **not** exposed: anything
-that would let a remote MCP client execute an arbitrary
-`ToolBoundary`-registered tool or otherwise act on the external world
--- this server surfaces Lantern's epistemic primitives only
+`lantern_transfer_manifest`, `lantern_permissions`. Every tool is a
+thin wrapper around an already-tested component -- no new
+decision/confidence/authorization logic exists in this module.
+Deliberately **not** exposed: anything that would let a remote MCP
+client execute an arbitrary `ToolBoundary`-registered tool or
+otherwise act on the external world -- this server surfaces Lantern's
+epistemic primitives only
 (`test_server_exposes_no_tool_capable_of_external_action` enforces
-this). It runs over stdio only (matches how MCP hosts launch local
-servers as a subprocess); nothing in this module binds a network port.
+this). `lantern_permissions` is read-only (lists this process's active
+`PermissionAuthority` grants); there is deliberately no
+`lantern_grant`/`lantern_revoke` MCP tool, since `granting_authority`
+must always be an explicit human-typed identifier (the REPL `/grant`
+pattern), never a string a remote MCP caller could supply on its own
+behalf (`test_server_exposes_no_grant_or_revoke_tool_over_mcp`
+enforces this). It runs over stdio only (matches how MCP hosts launch
+local servers as a subprocess); nothing in this module binds a network
+port.
 
 Verified end-to-end against a real independent MCP client (Lantern
 core's own `StdioMCPClient`, launched as a genuine child process, not

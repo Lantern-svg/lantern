@@ -53,6 +53,7 @@ from .bridge import LanternBridge
 from .confidence_field import ConfidenceField
 from .decision_state_machine import DecisionStateMachine
 from .operating_loop import OperatingLoop
+from .permission_authority import PermissionAuthority
 from .prompt_compiler import PromptCompiler
 from .self_model import SelfModel
 from .spine import BranchStore, SpineCommitter
@@ -81,6 +82,7 @@ class LanternMCPContext:
         self.branch_store = BranchStore()
         self.spine_committer = SpineCommitter(self.bridge)
         self.loop = OperatingLoop(self.bridge, self.tool_boundary)
+        self.permission_authority = PermissionAuthority()
 
 
 def build_server(context: Optional[LanternMCPContext] = None) -> "MCPServer":
@@ -183,6 +185,37 @@ def build_server(context: Optional[LanternMCPContext] = None) -> "MCPServer":
     )
     def lantern_transfer_manifest() -> dict:
         return build_manifest(ctx.bridge).to_dict()
+
+    @server.tool(
+        description=(
+            "List this server process's currently active PermissionAuthority "
+            "capability-scope grants (read-only -- this tool cannot grant or "
+            "revoke anything; there is no lantern_grant/lantern_revoke tool "
+            "exposed over MCP, deliberately, since granting_authority must "
+            "always be an explicit human-typed identifier per the harness's "
+            "REPL /grant command, not a string a remote MCP caller could "
+            "supply on its own behalf). A remote caller with no grants "
+            "listed here has no standing authority in this server process "
+            "beyond what lantern_evaluate_intent already exposes (a "
+            "recommendation, never an authorized or executed action). "
+            "Grants are in-process memory only and never persist across "
+            "server restarts."
+        )
+    )
+    def lantern_permissions() -> dict:
+        grants = ctx.permission_authority.active_grants()
+        return {
+            "active_grant_count": len(grants),
+            "active_grants": [
+                {
+                    "capability": g.capability,
+                    "scope": g.scope,
+                    "granting_authority": g.granting_authority,
+                    "version": g.version,
+                }
+                for g in grants
+            ],
+        }
 
     return server
 
