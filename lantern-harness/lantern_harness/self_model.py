@@ -55,7 +55,11 @@ KNOWN_GAPS = (
     "autonomous self-modification of Lantern core or the harness's own source",
     "unrestricted autonomous promotion (posting/contacting/publishing without a boundary check)",
     "a live, credentialed payment settlement path (x402 facilitator + wallet are not configured)",
-    "PyPI package publication (no publishing credentials present)",
+    "PyPI package publication (no publishing credentials present, and a "
+    "verified-empty local build/install test found a deeper blocker: no "
+    "declared dependency on Lantern core, which is itself unpublished, "
+    "plus prompts/ and config/ are not reachable by an installed wheel's "
+    "Path(__file__)-relative lookups -- see RELEASE.md)",
     "pushing commits to a public git remote without a separate explicit authorization step",
 )
 

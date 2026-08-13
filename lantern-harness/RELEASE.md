@@ -3,6 +3,62 @@
 Status document, like `RELEASE.md` in `lantern-babel-codex-bridge`.
 Only records changes that actually happened and were actually tested.
 
+## PyPI-readiness investigation: local build/install verification (no publish, no credentials touched)
+
+Autonomous-operation pass, staying within local/reversible boundaries
+(no network publish, no credential use -- neither exists nor was
+sought). Actually built the package locally (`python -m build`) and
+installed the resulting wheel into a disposable venv to test what a
+real `pip install lantern-harness` would do, rather than assuming from
+reading `pyproject.toml`.
+
+**Confirmed working**: the wheel's `.py` file manifest exactly matches
+the real `lantern_harness/`/`main.py` source tree -- no silent
+omissions from `[tool.setuptools.packages.find]`.
+
+**Found two real blockers**, both worse than the existing `KNOWN_GAPS`
+entry ("no publishing credentials present") implied -- even with
+credentials, this package would ship broken today:
+
+1. `prompts/system.md` and `config/config.json` are runtime assets
+   `main.py`/`lantern_harness/config.py` locate via
+   `Path(__file__).resolve().parent`-relative lookups. Verified by
+   installing the built wheel into a disposable venv: neither file is
+   present anywhere reachable from the installed `main.py`. Config
+   degrades gracefully (falls back to built-in defaults); the system
+   prompt loader also degrades gracefully (`load_system_prompt()`
+   returns `None`, `REASONING_ENGINE` reports `NOT_CONFIGURED` rather
+   than crashing) -- so this is a silent-degradation bug, not a crash,
+   which is arguably worse (fails quietly instead of loudly).
+   - Attempted fix: `[tool.setuptools.data-files]` pointing at
+     `prompts/` and `config/`. Verified this does NOT work --
+     `data-files` installs relative to the venv's `sys.prefix`, not
+     next to the package in `site-packages`, so `main.py`'s
+     `Path(__file__).parent` lookup still misses it. Reverted the
+     change (confirmed `git diff pyproject.toml` clean) rather than
+     leave a non-functional config in the tree. A real fix would need
+     `importlib.resources`-style package-data lookup instead of
+     filesystem-relative paths -- an actual code change to `main.py`
+     and `config.py`, not just a `pyproject.toml` edit, and not
+     attempted here since it touches how those two files locate their
+     inputs, deliberately left for a decision rather than a quiet
+     autonomous rewrite.
+2. `pyproject.toml` declares `dependencies = []` -- no dependency on
+   Lantern core (`lantern-babel-codex-bridge`, PyPI name `lantern`) at
+   all. Confirmed via `pip index versions lantern-babel-codex-bridge`:
+   not published. So even a perfectly-packaged harness wheel would
+   `ModuleNotFoundError: No module named 'lantern'` for anyone who
+   actually ran `pip install lantern-harness` standalone, since the
+   README's only documented install path (clone both repos, install
+   into the `lantern-babel-codex-bridge` sibling venv) is not what a
+   PyPI user would do.
+
+Updated `KNOWN_GAPS` in `lantern_harness/self_model.py` to state the
+real blocker instead of only "no credentials." No code behavior
+changed -- `pyproject.toml` is back to its pre-investigation state.
+Full harness suite: 194/194 passing (unchanged). No PyPI credentials
+exist, were sought, or were used; nothing was published anywhere.
+
 ## Docs staleness fix: PEACEMAKER.md and ODYSSEUS_INTEGRATION.md sync with PermissionAuthority/lantern_permissions
 
 Audit found PEACEMAKER.md's "carries" table and "sovereign" bullet
