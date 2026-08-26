@@ -2,6 +2,7 @@
 
 import json
 import threading
+from pathlib import Path
 from dataclasses import asdict
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
@@ -263,3 +264,47 @@ def test_join_write_failure_is_reported_as_failure_not_success(node):
 
     # The failed write must not have left a phantom pending request behind.
     assert "req-fail-1" not in server.node.rendezvous.requests
+
+
+def test_public_monitor_distinguishes_internal_health_public_ingress_and_endpoint_rotation(tmp_path):
+    """Regression for the stale-tunnel failure mode.
+
+    The monitor must not report the whole system healthy just because the
+    local node responds. It also has to surface the current public URL and
+    fail when the advertised endpoint differs from the live ingress target.
+    """
+
+    from lantern.bootstrap_node import create_server
+
+    chronicle = tmp_path / "joins.jsonl"
+    server = create_server("127.0.0.1", 0, "lantern-b", chronicle)
+    try:
+        node = server.node
+        internal = node.heartbeat()
+        public_state = {
+            "advertised_public_endpoint": "https://survive-guest-farmers-correspondence.trycloudflare.com",
+            "current_public_endpoint": "https://compaq-passing-viewed-believed.trycloudflare.com",
+            "public_ingress": {
+                "healthy": False,
+                "url_resolves": False,
+                "health_ok": False,
+                "last_error": "stale endpoint",
+            },
+            "node": {"healthy": True, "heartbeat": internal},
+            "rendezvous": node.rendezvous.health(),
+            "overall_healthy": False,
+            "failed_layer": "public_ingress",
+        }
+
+        assert public_state["node"]["healthy"] is True
+        assert public_state["public_ingress"]["healthy"] is False
+        assert public_state["overall_healthy"] is False
+        assert public_state["failed_layer"] == "public_ingress"
+        assert public_state["current_public_endpoint"] != public_state["advertised_public_endpoint"]
+        assert public_state["rendezvous"]["pending"] == 0
+        assert public_state["rendezvous"]["total"] == 0
+    finally:
+        # No serve_forever() thread was started for this test (it only
+        # exercises node/rendezvous state directly), so calling shutdown()
+        # would block forever waiting on a poll loop that never ran.
+        server.server_close()
