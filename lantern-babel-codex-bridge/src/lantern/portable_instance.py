@@ -255,13 +255,53 @@ def _validate_provenance(kernel: EvidenceKernel) -> None:
             raise ImportValidationError("unknown content provenance class present in imported observation")
 
 
-def import_instance(payload: dict, *, expected_node_id: Optional[str] = None) -> PortableInstance:
+def import_instance(
+    payload: dict,
+    *,
+    expected_node_id: Optional[str] = None,
+    expected_public_key: Optional[str] = None,
+    min_ownership_sequence: Optional[int] = None,
+) -> PortableInstance:
+    """Validate and restore a portable export payload.
+
+    expected_public_key: pin this import to a specific instance public
+        key. node_id alone is a caller-chosen label, not a cryptographic
+        binding -- anyone can mint a fresh keypair and self-sign a fully
+        internally-consistent export claiming an arbitrary node_id. When
+        the importer already knows the real instance's public key (e.g.
+        this is a re-import / refresh of a previously trusted instance,
+        not a first contact), it MUST pass expected_public_key so a
+        spoofed identity with a different key is rejected even though
+        every signature inside the bundle verifies against ITSELF.
+        On a genuine first import with no prior knowledge, there is
+        nothing to pin against -- that is an inherent trust-on-first-use
+        limitation of any offline export format, not something this
+        function can close; callers should persist the public key they
+        saw on first import and always pass it on every subsequent
+        import for the same node_id.
+    min_ownership_sequence: reject an import whose current ownership
+        sequence is lower than this. Without this check, a validly
+        signed but OLD export (captured before a later legitimate
+        ownership transfer) can be replayed and accepted as current --
+        every signature inside it is genuinely valid, it is simply
+        stale. Callers re-importing a previously-known instance should
+        pass the last sequence number they observed.
+    """
     _validate_export_shape(payload)
     if _canonical_export_hash(payload) != payload.get("export_hash"):
         raise ImportValidationError("portable instance export hash mismatch")
     _validate_compatibility_section(payload["compatibility"])
     _validate_identity_section(payload["identity"], expected_node_id=expected_node_id)
+    if expected_public_key is not None and payload["identity"]["public_key"] != expected_public_key:
+        raise ImportValidationError(
+            "identity public key does not match the previously trusted public key for this node_id"
+        )
     ownership_history = _validate_ownership_section(payload["ownership"], payload["identity"])
+    if min_ownership_sequence is not None and ownership_history.current().sequence < min_ownership_sequence:
+        raise ImportValidationError(
+            "ownership history is stale: current sequence is older than the last known sequence "
+            "(this export may be a replay of a previously superseded ownership state)"
+        )
     kernel = _validate_kernel_section(payload["kernel"], payload["identity"])
     _validate_provenance(kernel)
     identity = ImportedIdentity(

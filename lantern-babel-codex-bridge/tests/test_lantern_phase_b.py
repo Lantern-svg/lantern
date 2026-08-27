@@ -212,3 +212,71 @@ def test_revoked_ownership_export_cannot_import_as_active_state(ready_instance):
     payload = portable.export_payload()
     with pytest.raises(ImportValidationError):
         import_instance(payload)
+
+
+def test_spoofed_identity_with_different_key_but_same_node_id_is_rejected_when_pinned(tmp_path):
+    """node_id is a caller-chosen label, not a cryptographic binding.
+    An attacker can mint a brand-new keypair, self-label it with a
+    real node_id, and self-sign a fully internally-consistent export.
+    Every signature inside such a bundle verifies against itself, so
+    this can only be caught by pinning against a previously-known
+    public key -- exactly what expected_public_key does."""
+    real_dir = tmp_path / "real"
+    real_identity = idm.load_or_create("node-real", real_dir)
+    real_record = own.create_initial_ownership(real_identity, owner_id="alice", owner_token="tok")
+    real_kernel = EvidenceKernel(owner_instance=real_identity.public_key_hex)
+    real_grant = perms.create_capability_grant(real_identity, real_record, owner_token="tok", capabilities=[perms.MEMORY_READ, perms.EXPORT_STATE])
+    real_portable = PortableInstance(identity=real_identity, ownership_history=own.OwnershipHistory([real_record]), kernel=real_kernel, configuration={}, capability_grant=real_grant)
+
+    fake_dir = tmp_path / "fake"
+    fake_identity = idm.load_or_create("node-real", fake_dir)
+    fake_record = own.create_initial_ownership(fake_identity, owner_id="mallory", owner_token="fake-tok")
+    fake_kernel = EvidenceKernel(owner_instance=fake_identity.public_key_hex)
+    fake_grant = perms.create_capability_grant(fake_identity, fake_record, owner_token="fake-tok", capabilities=[perms.MEMORY_READ, perms.EXPORT_STATE])
+    fake_portable = PortableInstance(identity=fake_identity, ownership_history=own.OwnershipHistory([fake_record]), kernel=fake_kernel, configuration={}, capability_grant=fake_grant)
+    fake_payload = export_instance(fake_portable)
+
+    # Without pinning, node_id alone is not enough to catch this -- that
+    # is the documented trust-on-first-use limitation.
+    imported_unpinned = import_instance(fake_payload, expected_node_id="node-real")
+    assert imported_unpinned.identity.public_key_hex == fake_identity.public_key_hex
+
+    # Once the importer knows the real public key (e.g. from a prior
+    # trusted import), pinning must reject the spoofed bundle.
+    with pytest.raises(ImportValidationError):
+        import_instance(
+            fake_payload,
+            expected_node_id="node-real",
+            expected_public_key=real_identity.public_key_hex,
+        )
+
+
+def test_replayed_stale_ownership_export_is_rejected_when_sequence_is_known(tmp_path):
+    """A validly signed export captured while `bob` was the current
+    owner (sequence 1) must not be accepted as current after a further
+    legitimate transfer to `carol` (sequence 2) has happened -- every
+    signature in the replayed bundle is genuine, it is simply stale."""
+    identity = idm.load_or_create("node-replay", tmp_path / "node-replay")
+    r0 = own.create_initial_ownership(identity, owner_id="alice", owner_token="tok-a")
+    r1 = own.transfer_ownership(r0, identity, current_owner_token="tok-a", new_owner_id="bob", new_owner_token="tok-b")
+    own.transfer_ownership(r1, identity, current_owner_token="tok-b", new_owner_id="carol", new_owner_token="tok-c")
+
+    kernel = EvidenceKernel(owner_instance=identity.public_key_hex)
+    old_history = own.OwnershipHistory([r0, r1])
+    grant = perms.create_capability_grant(identity, r1, owner_token="tok-b", capabilities=[perms.MEMORY_READ, perms.EXPORT_STATE])
+    old_portable = PortableInstance(identity=identity, ownership_history=old_history, kernel=kernel, configuration={}, capability_grant=grant)
+    replayed_payload = export_instance(old_portable)
+
+    # Without a known floor, the stale-but-valid bundle imports "successfully".
+    imported = import_instance(replayed_payload, expected_node_id="node-replay")
+    assert imported.ownership_history.current().sequence == 1
+
+    # Once the importer records the last sequence it actually observed
+    # (2, from carol's transfer), replaying the sequence-1 bundle must
+    # be rejected.
+    with pytest.raises(ImportValidationError):
+        import_instance(
+            replayed_payload,
+            expected_node_id="node-replay",
+            min_ownership_sequence=2,
+        )
