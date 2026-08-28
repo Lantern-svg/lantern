@@ -21,6 +21,7 @@ from . import compatibility as compat
 from . import content_provenance as cp
 from . import instance_permissions as perms
 from . import ownership as own
+from . import trusted_instance_registry as registry_mod
 from .core import EvidenceKernel
 from .protocol import PROTOCOL_VERSION
 
@@ -315,3 +316,78 @@ def import_instance(
         configuration=payload.get("configuration", {}),
         capability_grant=None,
     )
+
+
+def import_instance_with_registry(
+    payload: dict,
+    registry: "registry_mod.TrustedInstanceRegistry",
+    *,
+    expected_node_id: Optional[str] = None,
+) -> PortableInstance:
+    """Registry-aware wrapper around import_instance().
+
+    Unlike import_instance(), where expected_public_key and
+    min_ownership_sequence are opt-in and rely on the caller to track
+    prior state manually, this wrapper makes both checks
+    DEFAULT-ENFORCED whenever the registry already holds prior state for
+    the presented node_id.
+
+    Behavior:
+      - If the registry has no prior state for this node_id (first
+        contact), the import proceeds exactly as import_instance() would
+        with no pinning -- this is the same trust-on-first-use (TOFU)
+        limitation documented in import_instance(); it is not silently
+        hidden here, it is simply the state before any contact exists.
+      - If the registry DOES have prior state (this node_id has been
+        seen before, trusted or not), expected_public_key and
+        min_ownership_sequence are supplied automatically from that
+        state -- the caller cannot accidentally omit them.
+      - Every import attempt is checked against the registry FIRST: if
+        the presented public key conflicts with previously trusted state,
+        a CollisionError is raised and recorded as a collision event
+        before import_instance() ever runs its own (state-blind)
+        signature/shape validation. Likewise a stale ownership sequence
+        raises SequenceRollbackError and is recorded as a rejected
+        replay. Only contacts that pass the registry's own state checks
+        proceed to import_instance() for the deeper hash/signature/
+        provenance validation.
+
+    This function does NOT choose values that override or weaken the
+    registry's own state -- it purely reads current prior_state() and
+    forwards it into import_instance()'s existing checks, then records
+    the accepted result back into the registry.
+    """
+    node_id = payload.get("identity", {}).get("node_id")
+    presented_public_key = payload.get("identity", {}).get("public_key")
+    current_ownership = payload.get("ownership", {}).get("current", {})
+    presented_sequence = current_ownership.get("sequence", 0)
+
+    if node_id is None or presented_public_key is None:
+        # Malformed payload -- let import_instance's own shape validation
+        # produce the actual error rather than guessing here.
+        return import_instance(payload, expected_node_id=expected_node_id)
+
+    # Registry check runs FIRST and is authoritative: it records the
+    # attempt regardless of outcome, and raises CollisionError /
+    # SequenceRollbackError if this contact conflicts with previously
+    # trusted state. This must happen before import_instance()'s own
+    # (state-blind) validation so a conflict is always captured in the
+    # registry's history, not just rejected and forgotten.
+    prior = registry.prior_state(node_id)
+    registry.check_and_record(
+        node_id=node_id,
+        presented_public_key=presented_public_key,
+        presented_ownership_sequence=presented_sequence,
+        outcome="accepted",
+        event_type="import_instance",
+        provenance=registry_mod.ProvenanceTag.PORTABLE_EXPORT_IMPORT,
+        notes="accepted via import_instance_with_registry",
+    )
+
+    return import_instance(
+        payload,
+        expected_node_id=expected_node_id,
+        expected_public_key=prior.expected_public_key,
+        min_ownership_sequence=prior.min_ownership_sequence if prior.min_ownership_sequence > 0 else None,
+    )
+
