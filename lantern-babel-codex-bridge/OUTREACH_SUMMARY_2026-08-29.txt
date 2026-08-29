@@ -1,0 +1,184 @@
+LANTERN OUTREACH SUMMARY — 2026-08-29 (webchat session)
+=========================================================
+
+SCOPE: Outreach, discovery, documentation, adoption tracking only.
+No financial/wallet activity (deferred by user instruction — wallet layer
+to be added separately). No fabricated leads, responses, or adoption.
+Everything below was verified live via gh api / gh issue / gh api graphql
+before and after acting.
+
+
+VERIFIED STATE BEFORE ACTING
+-----------------------------
+- ANP Discussion #93 (agent-network-protocol/AgentNetworkProtocol):
+  still 0 external replies (checked via GitHub GraphQL).
+- A2A Discussion #2127 (a2aproject/A2A): still 0 comments.
+- Live experimental node (lantern-field-experiment-1): healthy,
+  tunnel up, 0 joins / 0 pending — no activity to report, none invented.
+- web_search tool is disabled on this system (no provider configured);
+  used web_fetch + gh search/gh api for discovery instead.
+
+
+NEW OUTREACH POSTED THIS SESSION (3 real, substantive technical posts)
+------------------------------------------------------------------------
+
+1) ANP Issue #94 — "Work-Evidence Profile for Task Accountability and
+   Settlement Preconditions"
+   URL: https://github.com/agent-network-protocol/AgentNetworkProtocol/issues/94#issuecomment-5464343977
+   What: Shared Lantern's content-provenance taxonomy and Chronicle
+   hash-chain integrity model as a relevant data point on the issue's
+   evidence/verification/settlement split. Explicitly stated what
+   Lantern does NOT have (no ExecutionReceipt equivalent, no live
+   payment integration — x402 middleware exists but is not deployed).
+   Bonus find: thread references a live related implementation, Agent
+   Guild's AGI-1 standard (maintainer: AgentTanuki,
+   agent-guild-5d5r.onrender.com/standard) — noted for future
+   evaluation, not yet contacted directly.
+
+2) portable-agent-memory Issue #3 (new issue) —
+   santhoshravindran7/portable-agent-memory (19 stars, Apache-2.0)
+   URL: https://github.com/santhoshravindran7/portable-agent-memory/issues/3
+   Title: "Protocol feedback: static vs. accumulated confidence for
+   SemanticEntry"
+   What: Asked a scoped design question — does PAM define a rule for
+   reconciling disagreeing confidence values across agents' signed
+   memory artifacts, or is that intentionally out of scope? Flagged
+   Lantern's evidence-accumulation model as a possible complementary
+   layer without pitching integration.
+
+3) memex Issue #233 — "Memory Conflict Detection & Resolution" RFC,
+   JasperHG90/memex (17 stars, active research-driven repo)
+   URL: https://github.com/JasperHG90/memex/issues/233#issuecomment-5464359553
+   What: STRONGEST MATCH FOUND THIS SESSION. Active thread (5 prior
+   comments, real empirical data from another external contributor,
+   DanceNitra). Shared Lantern's actual shipped Contradiction object
+   model (never-delete, open|resolved states, logged resolution
+   events only) as a working answer to the RFC's hard-vs-soft-conflict
+   question. Honestly disclosed Lantern's own [OPEN] items (severity
+   function and detection trigger still unfrozen) and what's not
+   attempted at all (bitemporal valid-time semantics).
+
+
+EVALUATED BUT DELIBERATELY NOT CONTACTED (with reasons)
+----------------------------------------------------------
+- colapsis/agentid-protocol (agentid-live/examples): hosted SaaS
+  product, flat key-value memory, no evidence/provenance/confidence
+  model at all. Weak technical fit — deprioritized.
+- l33tdawg/sage: real and active (244 stars, BFT-consensus agent
+  memory infra), but no open issue/discussion existed to comment in,
+  and its mechanism (majority-vote consensus) genuinely differs from
+  Lantern's evidence-weighted revisable-belief model. Did not force
+  an unsolicited comment — no natural venue existed.
+- neomjs/neo-agent-brain issue #120: technically adjacent (claim-
+  scoped belief revision) but the project has dense internal jargon
+  and its own epic/issue numbering scheme that would take real effort
+  to engage meaningfully. Deferred rather than posting a shallow
+  comment.
+
+
+DISCOVERY LIST (12 projects/repos surfaced this session)
+------------------------------------------------------------
+- agent-network-protocol/AgentNetworkProtocol (1406 stars, active)
+- a2aproject/A2A (prior outreach, Discussion #2127, still 0 replies)
+- santhoshravindran7/portable-agent-memory (19 stars, Apache-2.0)
+- l33tdawg/sage (244 stars, active — deferred, no venue)
+- colapsis/agentid-protocol (weak fit — deprioritized)
+- AgentTanuki / agent-guild / AGI-1 (found via ANP #94, not yet contacted)
+- 0xneox/SAI (0 stars, low activity — not prioritized)
+- agentic-research/notme (3 stars — not yet evaluated)
+- fiducial-mesh/spec (0 stars — not yet evaluated)
+- JasperHG90/memex (17 stars, contacted — strongest match)
+- hleserg/atman (2 stars, Hindsight-paper belief/confidence work — not yet evaluated directly)
+- neomjs/neo-agent-brain (8 stars, updated same day — deferred, too much context debt)
+
+
+FUNNEL TRACKER STATE (agent_distribution_funnel.json)
+----------------------------------------------------------
+Was essentially empty/zeroed before this session. Populated with real,
+verified numbers only:
+  agents_discovered:   12
+  relevant_agents:      4
+  introductions:        4
+  responses:            0
+  payment_attempts:     0 (financial layer untouched, as instructed)
+  revenue_generated:    0
+Committed and pushed to origin/master (commit 313ecbe).
+
+
+RESPONSE STATUS
+------------------
+Zero responses so far on any of Lantern's 4 open outreach threads
+(ANP #93, ANP #94, PAM #3, memex #233) or on A2A #2127. Expected —
+posted same day or a few days ago. No follow-up planned before the
+policy's 7-day no-follow-up-without-response window.
+
+
+NEXT-SESSION REMINDERS
+--------------------------
+- Do not follow up early on any of the 4 open threads.
+- Evaluate AgentTanuki/agent-guild (AGI-1) as a possible direct contact.
+- Evaluate hleserg/atman directly (related to the memex/Hindsight thread).
+- Wallet/economic layer work is separate and explicitly deferred until
+  the user sets it up — do not touch REVENUE.md / x402 / payment
+  recipient config as part of outreach work.
+
+
+UPDATE — later same day (2026-08-29, continuation session)
+=============================================================
+
+Re-verified all 4 prior threads live via gh api before doing anything new:
+author, timestamp, and body content on ANP #94 / PAM #3 / memex #233 all
+match exactly what was claimed. Zero external replies on any of the 4
+(ANP #93, ANP #94, PAM #3, memex #233) or on A2A #2127. No follow-up
+posted (correctly within the 7-day window).
+
+Evaluated the two next-session reminders above:
+
+- hleserg/atman: real, active repo (2 stars, pushed 2026-08-07), genuine
+  topical overlap (conflict detection, provenance labels). NOT contacted:
+  1500+ issues, almost entirely self-filed by the owner, mostly in
+  Russian, internal refactor/architecture tickets — no open community
+  discussion venue. Posting there would land in a private backlog, not
+  reach a real audience. Honest call: deprioritize, don't force it.
+
+- AgentTanuki/agent-guild: real, live, hosted (agent-guild-5d5r.onrender.com),
+  actively maintained (issues same week), Apache-2.0, MCP+HTTP trust/
+  reputation/receipt layer for agents, heavy x402/escrow focus. Confirmed
+  outside issues are an accepted channel (precedent: issue #46 from an
+  unrelated external account). Opened issue #156 — a genuine scoped
+  question about whether Agent Guild's reputation/receipt model and
+  Lantern's real-time belief-reconciliation model have a natural
+  composition point, explicitly offering "these may just be different
+  enough problems" as an acceptable answer. No integration ask, no
+  adoption claim.
+  URL: https://github.com/AgentTanuki/agent-guild/issues/156
+
+Live node re-verified via the actual checked-in monitor module (not a
+manual curl): all 4 layers healthy (node, public_ingress, rendezvous,
+advertised_endpoint), tunnel unchanged since Phase C
+(compaq-passing-viewed-believed.trycloudflare.com), no rotation, GitHub
+discussion #93 comment_count unchanged (1). Cron job
+(7f7d8611-1d10-4c49-861d-00e69ac2abfe) confirmed enabled, running every
+15 min, lastRunStatus "ok", 0 consecutiveErrors — genuinely operational,
+not just configured.
+
+Reviewed Phase C's 3 disclosed limitations against "is this worth fixing
+before Phase D": all 3 (resolve_collision() caller authentication,
+in-memory cache staleness across concurrent same-process registries,
+TOFU on first contact) have no live caller/attack surface exercising them
+yet — fixing any of them now would mean inventing a new mechanism
+speculatively rather than responding to a real need. Deliberately left
+alone per "do not arbitrarily expand the architecture just to create
+work."
+
+Full test suite re-run before making any changes: 862 passed (unchanged
+from Phase C commit 07c2866) — no code changes made this session, so
+no new regression risk; only agent_distribution_funnel.json was updated
+with the 5th verified outreach action.
+
+Next-session reminders (updated):
+- 5 open threads total now: ANP #93, ANP #94, PAM #3, memex #233,
+  agent-guild #156. No follow-up on any before 7 days from their
+  respective post dates without a response.
+- hleserg/atman: leave alone (no real venue).
+- Wallet/economic layer still explicitly deferred — not touched.

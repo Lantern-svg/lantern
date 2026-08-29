@@ -20,7 +20,9 @@
         "posted_at": "2026-08-29",
         "target_issue": "[Feature]: Optional Work-Evidence Profile for Task Accountability and Settlement Preconditions",
         "issue_author": "XXY-CH",
-        "other_participants": ["AgentTanuki (maintainer of Agent Guild / AGI-1, referenced a live competing/complementary implementation)"],
+        "other_participants": [
+          "AgentTanuki (maintainer of Agent Guild / AGI-1, referenced a live competing/complementary implementation)"
+        ],
         "notes": "Substantive technical comment: named Lantern's content-provenance taxonomy, Chronicle hash-chain integrity model, and adversarial test coverage as a data point relevant to the issue's evidence/verification/settlement split. Explicitly scoped what Lantern does NOT do (no ExecutionReceipt/settlement equivalent, no live payment integration). Offered a schema crosswalk if wanted, did not push one unsolicited.",
         "next_action": "Wait for response from issue author or AgentTanuki. No follow-up before 7 days / without a response."
       },
@@ -31,7 +33,11 @@
         "posted_at": "2026-08-29",
         "title": "Protocol feedback: static vs. accumulated confidence for SemanticEntry",
         "repo_owner": "santhoshravindran7 (Santhosh Kumar Ravindran, Microsoft/Azure bio)",
-        "repo_stats": {"stars": 19, "license": "Apache-2.0", "last_commit": "2026-08-06"},
+        "repo_stats": {
+          "stars": 19,
+          "license": "Apache-2.0",
+          "last_commit": "2026-08-06"
+        },
         "notes": "Asked a genuine scoped design question: does PAM define multi-agent confidence reconciliation for SemanticEntry, or is that explicitly out of scope? Flagged Lantern's evidence-accumulation/contradiction model as a possible complementary layer without pitching integration. No claims of adoption or partnership.",
         "next_action": "Wait for maintainer response. No follow-up before 7 days."
       },
@@ -40,15 +46,38 @@
         "url": "https://github.com/JasperHG90/memex/issues/233#issuecomment-5464359553",
         "status": "posted",
         "posted_at": "2026-08-29",
-        "target_issue": "[RFC]: Memory Conflict Detection & Resolution — Handling Legitimate Contradictions in Knowledge",
-        "repo_stats": {"stars": 17, "active": true, "existing_comments_before_post": 5},
-        "other_participants": ["JasperHG90 (maintainer, active research-tracking)", "DanceNitra (external contributor with real empirical data on superseded-value frequency)"],
+        "target_issue": "[RFC]: Memory Conflict Detection & Resolution \u2014 Handling Legitimate Contradictions in Knowledge",
+        "repo_stats": {
+          "stars": 17,
+          "active": true,
+          "existing_comments_before_post": 5
+        },
+        "other_participants": [
+          "JasperHG90 (maintainer, active research-tracking)",
+          "DanceNitra (external contributor with real empirical data on superseded-value frequency)"
+        ],
         "notes": "Strongest technical match found this session. Shared Lantern's actual shipped Contradiction object model (never-delete, logged resolution-event, open|resolved states) as a working data point against the RFC's hard/soft conflict question. Explicitly disclosed what's still open/unfrozen in Lantern's own docs (severity function, detection trigger) and what's not attempted at all (bitemporal valid-time semantics). No integration pitch, no adoption claim.",
+        "next_action": "Wait for response. No follow-up before 7 days."
+      },
+      "AgentTanuki/agent-guild#156": {
+        "type": "issue",
+        "url": "https://github.com/AgentTanuki/agent-guild/issues/156",
+        "status": "posted",
+        "posted_at": "2026-08-29",
+        "title": "Protocol question: where does reputation/receipt evidence meet belief reconciliation (if at all)?",
+        "repo_stats": {
+          "stars": 1,
+          "open_issues": 28,
+          "license": "Apache-2.0",
+          "pushed_at": "2026-08-27"
+        },
+        "discovered_via": "AgentTanuki commented on ANP issue #94 (2026-08-25) describing Agent Guild's Verifiable Collaboration Record -- direct, non-cold contact, not a fabricated lead.",
+        "notes": "Live, hosted, actively-maintained trust/reputation/receipt layer for AI agents (MCP + HTTP, x402/escrow-heavy). Different core mechanism than Lantern (reputation/settlement track record vs. real-time belief reconciliation). Confirmed outside issues are an accepted channel on this repo (precedent: issue #46 from an unrelated outside account). Asked a genuine scoped question about whether/where the two models compose, explicitly offered 'these may just be different enough problems' as an acceptable answer -- no integration ask, no adoption claim.",
         "next_action": "Wait for response. No follow-up before 7 days."
       }
     }
   },
-  "agents_discovered": 12,
+  "agents_discovered": 13,
   "agents_discovered_list": [
     "agent-network-protocol/AgentNetworkProtocol (1406 stars, active)",
     "a2aproject/A2A (prior outreach, Discussion #2127, still 0 comments as of 2026-08-29 per GraphQL check)",
@@ -61,11 +90,12 @@
     "fiducial-mesh/spec (sovereign agent identity spec for regulated AI, 0 stars - not yet evaluated)",
     "JasperHG90/memex (17 stars, active research-driven RFC process, strongest technical match found - contacted)",
     "hleserg/atman (2 stars, Hindsight-paper-based belief/confidence work, related to memex thread - not yet evaluated directly)",
-    "neomjs/neo-agent-brain (8 stars, updated same day, dense internal jargon/epic structure - high effort to engage meaningfully, deferred)"
+    "neomjs/neo-agent-brain (8 stars, updated same day, dense internal jargon/epic structure - high effort to engage meaningfully, deferred)",
+    "AgentTanuki/agent-guild (1 star shown via API but live/hosted/actively maintained, x402/reputation-receipt layer, directly contacted via issue #156 -- was previously 'discovered, not yet contacted')"
   ],
-  "relevant_agents": 4,
+  "relevant_agents": 5,
   "relevant_agents_notes": "Relevance = actual technical overlap with evidence/provenance/belief-reconciliation, not just keyword match on 'agent' + 'protocol'/'identity'. Most GitHub search hits for those keywords are hackathon projects or wallet/payment tooling with no conceptual overlap. Searching GitHub issues directly for 'belief'+'confidence'+'agent' surfaced far higher-signal, already-active technical threads than repo-name keyword search.",
-  "introductions": 4,
+  "introductions": 5,
   "responses": 0,
   "capability_requests": 0,
   "payment_attempts": 0,
@@ -97,8 +127,14 @@
       "channel": "github_issue_comment",
       "status": "introduced",
       "last_contact": "2026-08-29"
+    },
+    {
+      "name": "AgentTanuki/agent-guild issue #156",
+      "channel": "github_issue",
+      "status": "introduced",
+      "last_contact": "2026-08-29"
     }
   ],
-  "last_updated": "2026-08-29T19:25:00Z",
-  "notes": "Funnel counts reflect only actions independently verified via gh api/gh issue/gh api graphql calls in this session and the 2026-08-24/26 session. No fabricated leads, responses, or adoption. Discord channel confirmed dead (bot in 0 guilds, expired capability auth) - excluded from platforms list until re-authorized."
+  "last_updated": "2026-08-29T20:05:00Z",
+  "notes": "Funnel counts reflect only actions independently verified via gh api/gh issue/gh api graphql calls across sessions on 2026-08-24, 2026-08-26, and 2026-08-29. No fabricated leads, responses, or adoption. As of 2026-08-29T20:05Z: re-verified live (author=Lantern-svg, content matches funnel notes) via gh api for ANP #94 comment, PAM #3 issue, memex #233 comment, and confirmed zero external replies on all 5 open threads (ANP #93, ANP #94, PAM #3, memex #233, agent-guild #156) plus A2A #2127 (also 0). Discord channel confirmed dead (bot in 0 guilds, expired capability auth) - excluded from platforms list until re-authorized. hleserg/atman evaluated and deliberately NOT contacted: real/active repo but 1500+ mostly self-filed, Russian-language internal refactor tickets with no open community discussion venue -- posting there would land in a private backlog, not a real technical audience."
 }
