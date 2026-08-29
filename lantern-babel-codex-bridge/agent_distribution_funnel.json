@@ -1,8 +1,71 @@
 {
-  "platforms": {},
-  "agents_discovered": 0,
-  "relevant_agents": 0,
-  "introductions": 0,
+  "platforms": {
+    "github_discussions": {
+      "agent-network-protocol/AgentNetworkProtocol": {
+        "type": "discussion",
+        "number": 93,
+        "url": "https://github.com/agent-network-protocol/AgentNetworkProtocol/discussions/93",
+        "status": "posted",
+        "posted_at": "2026-08-24",
+        "last_update": "2026-08-26T19:09:02Z",
+        "notes": "Initial intro posted with operator approval. Endpoint went stale (tunnel restart, quick-tunnel hostnames rotate); correction comment posted 2026-08-26 with corrected live endpoint and independent /health verification. 0 external replies as of 2026-08-29 (checked via GitHub GraphQL API).",
+        "next_action": "No further action until a response arrives or 7-day no-follow-up window logic applies. Do not re-post."
+      }
+    },
+    "github_issues": {
+      "agent-network-protocol/AgentNetworkProtocol#94": {
+        "type": "issue_comment",
+        "url": "https://github.com/agent-network-protocol/AgentNetworkProtocol/issues/94#issuecomment-5464343977",
+        "status": "posted",
+        "posted_at": "2026-08-29",
+        "target_issue": "[Feature]: Optional Work-Evidence Profile for Task Accountability and Settlement Preconditions",
+        "issue_author": "XXY-CH",
+        "other_participants": ["AgentTanuki (maintainer of Agent Guild / AGI-1, referenced a live competing/complementary implementation)"],
+        "notes": "Substantive technical comment: named Lantern's content-provenance taxonomy, Chronicle hash-chain integrity model, and adversarial test coverage as a data point relevant to the issue's evidence/verification/settlement split. Explicitly scoped what Lantern does NOT do (no ExecutionReceipt/settlement equivalent, no live payment integration). Offered a schema crosswalk if wanted, did not push one unsolicited.",
+        "next_action": "Wait for response from issue author or AgentTanuki. No follow-up before 7 days / without a response."
+      },
+      "santhoshravindran7/portable-agent-memory#3": {
+        "type": "issue",
+        "url": "https://github.com/santhoshravindran7/portable-agent-memory/issues/3",
+        "status": "posted",
+        "posted_at": "2026-08-29",
+        "title": "Protocol feedback: static vs. accumulated confidence for SemanticEntry",
+        "repo_owner": "santhoshravindran7 (Santhosh Kumar Ravindran, Microsoft/Azure bio)",
+        "repo_stats": {"stars": 19, "license": "Apache-2.0", "last_commit": "2026-08-06"},
+        "notes": "Asked a genuine scoped design question: does PAM define multi-agent confidence reconciliation for SemanticEntry, or is that explicitly out of scope? Flagged Lantern's evidence-accumulation/contradiction model as a possible complementary layer without pitching integration. No claims of adoption or partnership.",
+        "next_action": "Wait for maintainer response. No follow-up before 7 days."
+      },
+      "JasperHG90/memex#233": {
+        "type": "issue_comment",
+        "url": "https://github.com/JasperHG90/memex/issues/233#issuecomment-5464359553",
+        "status": "posted",
+        "posted_at": "2026-08-29",
+        "target_issue": "[RFC]: Memory Conflict Detection & Resolution — Handling Legitimate Contradictions in Knowledge",
+        "repo_stats": {"stars": 17, "active": true, "existing_comments_before_post": 5},
+        "other_participants": ["JasperHG90 (maintainer, active research-tracking)", "DanceNitra (external contributor with real empirical data on superseded-value frequency)"],
+        "notes": "Strongest technical match found this session. Shared Lantern's actual shipped Contradiction object model (never-delete, logged resolution-event, open|resolved states) as a working data point against the RFC's hard/soft conflict question. Explicitly disclosed what's still open/unfrozen in Lantern's own docs (severity function, detection trigger) and what's not attempted at all (bitemporal valid-time semantics). No integration pitch, no adoption claim.",
+        "next_action": "Wait for response. No follow-up before 7 days."
+      }
+    }
+  },
+  "agents_discovered": 12,
+  "agents_discovered_list": [
+    "agent-network-protocol/AgentNetworkProtocol (1406 stars, active)",
+    "a2aproject/A2A (prior outreach, Discussion #2127, still 0 comments as of 2026-08-29 per GraphQL check)",
+    "santhoshravindran7/portable-agent-memory (19 stars, Apache-2.0, strong technical overlap)",
+    "l33tdawg/sage (244 stars, active, BFT-consensus agent memory infra - different mechanism, no open issue/discussion to engage in, deferred, not contacted)",
+    "colapsis/agentid-protocol == agentid-live/examples (hosted SaaS product, flat key-value memory, no evidence/provenance model - weak technical fit, deprioritized)",
+    "AgentTanuki / agent-guild (AGI-1 standard, provenance tiers, live at agent-guild-5d5r.onrender.com/standard - discovered via ANP issue #94, not yet directly contacted, worth independent evaluation)",
+    "0xneox/SAI (Sovereign Agent Identity Protocol, 0 stars, low activity - not prioritized)",
+    "agentic-research/notme (self-sovereign agent identity, 3 stars - not yet evaluated)",
+    "fiducial-mesh/spec (sovereign agent identity spec for regulated AI, 0 stars - not yet evaluated)",
+    "JasperHG90/memex (17 stars, active research-driven RFC process, strongest technical match found - contacted)",
+    "hleserg/atman (2 stars, Hindsight-paper-based belief/confidence work, related to memex thread - not yet evaluated directly)",
+    "neomjs/neo-agent-brain (8 stars, updated same day, dense internal jargon/epic structure - high effort to engage meaningfully, deferred)"
+  ],
+  "relevant_agents": 4,
+  "relevant_agents_notes": "Relevance = actual technical overlap with evidence/provenance/belief-reconciliation, not just keyword match on 'agent' + 'protocol'/'identity'. Most GitHub search hits for those keywords are hackathon projects or wallet/payment tooling with no conceptual overlap. Searching GitHub issues directly for 'belief'+'confidence'+'agent' surfaced far higher-signal, already-active technical threads than repo-name keyword search.",
+  "introductions": 4,
   "responses": 0,
   "capability_requests": 0,
   "payment_attempts": 0,
@@ -10,5 +73,32 @@
   "completed_reconciliations": 0,
   "repeat_usage": 0,
   "revenue_generated": 0,
-  "contacts": []
+  "contacts": [
+    {
+      "name": "agent-network-protocol/AgentNetworkProtocol",
+      "channel": "github_discussion_93",
+      "status": "introduced",
+      "last_contact": "2026-08-26"
+    },
+    {
+      "name": "agent-network-protocol/AgentNetworkProtocol issue #94 (XXY-CH, AgentTanuki)",
+      "channel": "github_issue_comment",
+      "status": "introduced",
+      "last_contact": "2026-08-29"
+    },
+    {
+      "name": "santhoshravindran7/portable-agent-memory",
+      "channel": "github_issue",
+      "status": "introduced",
+      "last_contact": "2026-08-29"
+    },
+    {
+      "name": "JasperHG90/memex issue #233 (JasperHG90, DanceNitra)",
+      "channel": "github_issue_comment",
+      "status": "introduced",
+      "last_contact": "2026-08-29"
+    }
+  ],
+  "last_updated": "2026-08-29T19:25:00Z",
+  "notes": "Funnel counts reflect only actions independently verified via gh api/gh issue/gh api graphql calls in this session and the 2026-08-24/26 session. No fabricated leads, responses, or adoption. Discord channel confirmed dead (bot in 0 guilds, expired capability auth) - excluded from platforms list until re-authorized."
 }
