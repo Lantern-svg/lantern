@@ -57,6 +57,37 @@ one of (`CDP_API_KEY_ID`+`CDP_API_KEY_SECRET`) or a live
 This is the **smallest real monetizable capability** already built:
 everything up to the financial/identity boundary is done and tested.
 
+**Update, 2026-08-30 (mission: prepare production path):** the operator
+supplied a real receiving wallet address
+(`0xD062a97d1Bc9D7CE42B2bD1E4BD7f9d3aa4E2683`) and authorized preparing
+(not executing) the full production path. Re-inspected `service.py`
+directly (not from this document) and re-ran tests fresh: still 10/10
+on `tests/test_service_integration.py`, still 862 passed (now 871 with
+a new ledger test file) on the full suite. Confirmed via the real
+`cdp-sdk` package source (downloaded and read, not assumed from docs)
+that `service.py`'s existing CDP integration code is already correct.
+Built three new artifacts, none of which touch financial state:
+- `CDP_INTEGRATION.md` — exact CDP account/credential/package
+  requirements and how the payment/settlement flow actually works,
+  verified against real source.
+- `DEPLOYMENT_CHECKLIST.md` — three explicit gates (testnet /
+  production-prep / mainnet-authorization), with mainnet, real-money
+  acceptance, public exposure, and fund movement all requiring separate
+  explicit operator authorization under Gate 3.
+- `src/lantern/revenue_ledger.py` (+ `tests/test_revenue_ledger.py`,
+  9/9 passing) — reads the service's own Chronicle and classifies
+  outcomes honestly: testnet settlements, unpaid/failed calls, and the
+  service's own "verified_pending_settlement" intermediate state are
+  all explicitly excluded from `gross_revenue_usd`; only
+  `settlement_status == "settled"` on the configured mainnet network
+  counts. A real accounting bug (stale `net_contribution_usd` field)
+  was caught by this test suite and fixed before merge.
+
+Still not done, deliberately: no `cdp-sdk` install, no CDP account/key
+creation or request, no env vars set, no mainnet network change, no
+service process started, no funds received or moved. Base Sepolia
+(`eip155:84532`) remains the only configured network.
+
 ## Capability 2: Paid prompt compilation (investigated, not yet built)
 
 The mission asks about "paid prompt compilation" as a revenue path.
