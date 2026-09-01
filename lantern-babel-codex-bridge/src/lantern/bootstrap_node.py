@@ -339,7 +339,9 @@ class LanternNode:
             response["expires_at_monotonic"] = result.session.expires_at_monotonic
         return response
 
-    def _authorized_capability_decision(self, node_id: str):
+    def _authorized_capability_decision(
+        self, node_id: str, *, requested: list[str] | None = None
+    ):
         """Build a CapabilityDecision for an already-verified session's
         node_id, using THIS node's own authorization_policy. Reuses
         capability_authorization.authorize() verbatim -- never
@@ -353,6 +355,11 @@ class LanternNode:
         CRYPTOGRAPHICALLY_VERIFIED fact -- the session's existence IS
         the proof, re-derived from _known_public_keys exactly as
         open_session() does, never assumed.
+
+        requested: list of capability names to request authorization for.
+        Defaults to [EvidenceExchangeCapability] for backward
+        compatibility -- existing callers of receive_secure() are
+        unchanged.
         """
         identity_status = (
             identity_module.CRYPTOGRAPHICALLY_VERIFIED
@@ -373,11 +380,97 @@ class LanternNode:
             contact_endpoint="",
             reason="derived from bootstrap_node verified session",
         )
+        if requested is None:
+            requested = [observation_exchange.EvidenceExchangeCapability]
         return capability_authorization.authorize(
             verified,
-            requested=[observation_exchange.EvidenceExchangeCapability],
+            requested=requested,
             policy=self.authorization_policy,
         )
+
+    def query_beliefs(self, session_id: str, source_node_id: str, concepts: list[str] | None = None) -> dict:
+        """Read-only belief query: returns the current belief state of
+        THIS node's EvidenceKernel without mutating any state.
+
+        Requires a valid, non-expired session bound to source_node_id,
+        AND explicit belief_query authorization from
+        self.authorization_policy. Reuses the same session resolution
+        and capability authorization path as receive_secure() -- never
+        reimplemented here.
+
+        Returns only: concept names, belief floats (0-1), evidence
+        counts, and contradiction status. Never returns raw observation
+        content, raw evidence items, private keys, or owner_instance
+        fields. Never calls observe(), add_evidence(), resolve(),
+        persist_scar(), or chronicle.append().
+        """
+        BeliefQueryCapability = "belief_query"
+
+        # Session validation: same pattern as receive_secure()
+        lookup = self.sessions.resolve_session(
+            session_id=session_id, expected_source=source_node_id
+        )
+        if not lookup.valid:
+            return {
+                "accepted": False,
+                "reason": f"{lookup.outcome}: {lookup.reason}",
+                "data": {},
+            }
+
+        # Capability authorization: request belief_query specifically
+        decision = self._authorized_capability_decision(
+            lookup.node_id, requested=[BeliefQueryCapability]
+        )
+        if not decision.is_authorized(BeliefQueryCapability):
+            return {
+                "accepted": False,
+                "reason": f"'{BeliefQueryCapability}' is not in authorized_capabilities for '{lookup.node_id}'",
+                "denied": dict(decision.denied_capabilities),
+                "data": {},
+            }
+
+        # Read-only belief state extraction
+        kernel = self.lantern.kernel
+        evidence_concepts = {e.concept for e in kernel.evidence}
+
+        if concepts is not None:
+            query_concepts = set(concepts)
+        else:
+            query_concepts = evidence_concepts
+
+        concept_results = []
+        for concept in sorted(query_concepts):
+            belief_value = kernel.belief(concept)
+            evidence_count = sum(1 for e in kernel.evidence if e.concept == concept)
+            contradiction = kernel.latest_contradiction(concept)
+            contradiction_status = None
+            if contradiction is not None:
+                contradiction_status = {
+                    "status": contradiction.status,
+                    "severity": round(contradiction.current_severity, 4),
+                    "created_step": contradiction.created_step,
+                }
+            concept_results.append({
+                "concept": concept,
+                "belief": round(belief_value, 4),
+                "evidence_count": evidence_count,
+                "contradiction": contradiction_status,
+            })
+
+        watermark = local_watermark(self.lantern)
+
+        return {
+            "accepted": True,
+            "queried_by": source_node_id,
+            "responded_by": self.node_id,
+            "concepts": concept_results,
+            "step": kernel.step,
+            "watermark": {
+                "chain": watermark.chain,
+                "step": watermark.step,
+            },
+            "total_concepts": len(concept_results),
+        }
 
     def receive_secure(self, message_data: dict, session_id: str) -> dict:
         """Secure /message path: requires a valid, non-expired
@@ -693,6 +786,22 @@ class _Handler(BaseHTTPRequestHandler):
                 self._respond(
                     200,
                     self.node.receive(message, peer_capabilities or {}, session_id=session_id),
+                )
+                return
+
+            if self.path == "/belief/query":
+                session_id = body.get("session_id")
+                source_node_id = body.get("node_id")
+                concepts = body.get("concepts")
+                if not isinstance(session_id, str) or not session_id:
+                    raise ValueError("session_id (string) is required")
+                if not isinstance(source_node_id, str) or not source_node_id:
+                    raise ValueError("node_id (string) is required")
+                if concepts is not None and not isinstance(concepts, list):
+                    raise ValueError("concepts must be a list of strings when provided")
+                self._respond(
+                    200,
+                    self.node.query_beliefs(session_id, source_node_id, concepts),
                 )
                 return
 
