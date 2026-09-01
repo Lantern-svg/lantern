@@ -60,18 +60,57 @@ A concept's evaluated state at a point in time: the confidence value plus the ev
 
 ### Contradiction
 
+**Corrected 2026-09-01** to match the actual shipped implementation
+(`src/lantern/core.py:129`), after an external review
+(github.com/JasperHG90/memex#233, comment by @DanceNitra) found this
+section describing a design that was never implemented. The doc below
+previously showed `belief_a`/`belief_b`/`resolution_state`, which do not
+exist in code; corrected to the real, tested dataclass instead of
+changing the running kernel to match a stale doc.
+
 ```
 Contradiction {
-  belief_a
-  belief_b
-  severity
-  evidence
-  resolution_state   // open | resolved
-  resolution_event    // ref to the Evidence or adjudication record that resolved it, if any
+  concept              // keyed on concept, not on a belief_a/belief_b pair
+  evidence_snapshot    // ids of all Evidence for this concept at detection time
+  historical_severity
+  current_severity
+  created_step
+  owner_instance
+  id
+  status               // "OPEN" | "RESOLVED"
+  resolution_id        // ref to the ResolutionEvent that resolved it, if any
+  supersedes           // id of the prior Contradiction for this concept, if any
+  superseded_by        // id of the next Contradiction for this concept, if any
 }
 ```
 
-Never deleted. `resolution_state` transitions are themselves logged events, not silent overwrites.
+Detection (`EvidenceKernel.detect_contradiction`) is keyed on `concept`,
+not on a pair of specific beliefs: it gathers all Evidence for that
+concept, splits them by `Evidence.sign` (`+1`/`-1`), and only returns a
+Contradiction when both signs are present. `sign` is supplied by the
+caller when evidence is added (`add_evidence`) — it is not derived from
+semantic content by any logic in `core.py`. This means two evidence
+items only register as contradicting if whoever wrote the evidence has
+already mapped them onto the same signed axis (e.g. deciding that
+"Senior Data Analyst" negates "Junior Data Analyst" is the caller's
+job, not the kernel's).
+
+A new Contradiction is only created when the evidence snapshot for a
+concept actually changes; if the same snapshot recurs, the existing
+Contradiction's `current_severity` is updated in place rather than a
+duplicate being created (`latest.evidence_snapshot == snapshot` check).
+When a new Contradiction does replace a resolved/stale one for the same
+concept, `supersedes`/`superseded_by` link them — this is what actually
+implements "never deleted": a superseded Contradiction stays in
+`self.contradictions` permanently, it is only ever linked forward, never
+removed.
+
+Separately, `codex_compare.ConceptComparison` also has fields literally
+named `belief_a`/`belief_b` — those are two *instances'* confidence
+floats for the same concept during cross-instance comparison, an
+unrelated cross-instance concept, not a same-kernel Contradiction field.
+Do not conflate the two; this doc previously did, indirectly, by using
+similar-sounding names for a different feature.
 
 ### Scar
 
