@@ -100,6 +100,25 @@ def evaluate_handshake(request: HandshakeRequest, supported_capabilities=None, r
 
     response_node_id = responder_node_id if responder_node_id is not None else str(uuid.uuid4())
 
+    # Defense in depth: the HTTP layer (bootstrap_node.py do_POST) already
+    # validates capabilities is a dict before constructing HandshakeRequest,
+    # but HandshakeRequest is a plain dataclass -- it does not enforce its
+    # own type hints at runtime, so any other caller (tests, future code
+    # paths) that constructs one directly with a malformed capabilities
+    # value would otherwise crash below with an uncaught AttributeError
+    # instead of a controlled rejection. This must reject before doing
+    # anything else: no version check, no capability evaluation, nothing
+    # that could be mistaken for a partially-processed handshake.
+    if not isinstance(request.capabilities, dict):
+        return HandshakeResponse(
+            node_id=response_node_id,
+            accepted=False,
+            protocol_version=PROTOCOL_VERSION,
+            shared_capabilities={},
+            reason="Malformed request: capabilities must be an object",
+            timestamp=datetime.now(timezone.utc).isoformat(),
+        )
+
     if not compatible_versions(PROTOCOL_VERSION, request.protocol_version):
         return HandshakeResponse(
             node_id=response_node_id,

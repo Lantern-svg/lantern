@@ -605,7 +605,37 @@ class _Handler(BaseHTTPRequestHandler):
         try:
             body = self._read_json()
             if self.path == "/handshake":
-                request = HandshakeRequest(**body)
+                # Validate field types before constructing HandshakeRequest.
+                # Dataclasses do not enforce their type hints at runtime, so
+                # HandshakeRequest(**body) with a malformed body (e.g.
+                # capabilities as a string instead of a dict) previously
+                # constructed successfully and only failed later, inside
+                # evaluate_handshake()'s capabilities.items() call, as an
+                # uncaught AttributeError -- outside the (TypeError, ValueError,
+                # KeyError, ...) tuple this handler already catches below, so
+                # it propagated as an unhandled exception instead of a clean
+                # 400. Every other endpoint in this handler (/identity/challenge,
+                # /session/open, /message, /connection-state) already validates
+                # field types explicitly with isinstance() before use; this
+                # closes the one endpoint that skipped that convention.
+                node_id = body.get("node_id")
+                protocol_version = body.get("protocol_version")
+                capabilities = body.get("capabilities")
+                timestamp = body.get("timestamp")
+                if not isinstance(node_id, str) or not node_id:
+                    raise ValueError("node_id (string) is required")
+                if not isinstance(protocol_version, str) or not protocol_version:
+                    raise ValueError("protocol_version (string) is required")
+                if not isinstance(capabilities, dict):
+                    raise ValueError("capabilities (object) is required")
+                if not isinstance(timestamp, str) or not timestamp:
+                    raise ValueError("timestamp (string) is required")
+                request = HandshakeRequest(
+                    node_id=node_id,
+                    protocol_version=protocol_version,
+                    capabilities=capabilities,
+                    timestamp=timestamp,
+                )
                 response = self.node.evaluate_incoming_handshake(request)
                 self._respond(200, asdict(response))
                 return
