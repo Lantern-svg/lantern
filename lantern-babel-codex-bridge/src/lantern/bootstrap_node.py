@@ -580,7 +580,18 @@ class _Handler(BaseHTTPRequestHandler):
         if self.path == "/participants":
             # Read-only inspection: claims as recorded, never re-verified
             # here and never treated as authorization. See participants.py.
-            views = [view.to_dict() for view in inspect_all(self.node.rendezvous)]
+            # known_public_keys is passed through so identity_status
+            # accurately reflects any real challenge/response proof this
+            # process already completed for a node_id (see
+            # inspect_all()'s docstring) -- trust_status/authority_level
+            # remain untouched and unconditionally "unverified"/"none".
+            views = [
+                view.to_dict()
+                for view in inspect_all(
+                    self.node.rendezvous,
+                    known_public_keys=self.node._known_public_keys,
+                )
+            ]
             self._respond(200, {"participants": views})
             return
         if self.path.startswith("/participants/") and self.path.endswith("/next-step"):
