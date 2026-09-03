@@ -28,6 +28,27 @@ from .capability_authorization import AuthorizationPolicy, EMPTY_POLICY
 from .compatibility import DEFAULT_CAPABILITIES, negotiate
 from .continuity import local_watermark
 from .core import Chronicle, Lantern
+
+# Serialization boundary: converts frozen-dataclass fields that are
+# immutable (MappingProxyType, tuple) into JSON-serializable native types.
+# This is the ONLY place where immutable internal structures are unwrapped
+# for external consumption. Internal code always sees the immutable forms.
+from types import MappingProxyType as _MappingProxyType
+
+def _serializable_dict(obj):
+    """Convert a frozen dataclass to a JSON-safe dict.
+
+    MappingProxyType → dict, tuple → list, everything else passes through.
+    """
+    result = {}
+    for key, value in obj.__dict__.items():
+        if isinstance(value, _MappingProxyType):
+            result[key] = dict(value)
+        elif isinstance(value, tuple):
+            result[key] = list(value)
+        else:
+            result[key] = value
+    return result
 from .handshake import HandshakeRequest, create_handshake, evaluate_handshake
 from .heartbeat import create_heartbeat, evaluate_connection
 from . import identity as identity_module
@@ -302,16 +323,19 @@ class LanternNode:
     # Verified session (secure /message path, Phase 4 slice)
     # ==================================================
 
-    def open_session(self, node_id: str) -> dict:
-        """Issue a short-lived verified session for node_id.
+    def open_session(self, node_id: str, proof_data: dict | None = None) -> dict:
+        """Issue a short-lived verified session for node_id, requiring
+        per-request proof of private-key possession (Gate 2 Finding 9).
 
-        May only succeed if THIS process has already recorded a
-        CRYPTOGRAPHICALLY_VERIFIED public key for node_id via
-        verify_identity_proof() -- i.e. this node (as initiator A)
-        already completed a real challenge/response proof for the
-        caller. There is no other way to reach CREATED: this method
-        performs no cryptographic verification itself, it only checks
-        that verification already happened and was recorded.
+        Two-phase protocol:
+        - proof_data is None: issue a challenge and return it. The caller
+          must sign it and call again with proof_data.
+        - proof_data is provided: verify the proof against the stored
+          public key for node_id. Only if valid is a session created.
+
+        Membership in _known_public_keys is necessary but not sufficient.
+        The caller must prove they hold the private key *now*, not just
+        that the node_id was verified at some point in the past.
 
         This does NOT grant trust or authorize any capability -- see
         verified_session.py module docstring. A session proves identity
@@ -322,21 +346,52 @@ class LanternNode:
         if not isinstance(node_id, str) or not node_id:
             raise ValueError("node_id (string) is required")
 
-        # _known_public_keys is populated ONLY on a successful
-        # CRYPTOGRAPHICALLY_VERIFIED proof (see verify_identity_proof()
-        # above) -- presence here is exactly "this process has already
-        # cryptographically verified this node_id", the one precondition
-        # verified_session.create_session() requires.
-        if node_id in self._known_public_keys:
-            identity_status = identity_module.CRYPTOGRAPHICALLY_VERIFIED
-        else:
-            identity_status = identity_module.UNVERIFIED
+        # Must be a previously-verified node_id. _known_public_keys is
+        # populated ONLY on a successful CRYPTOGRAPHICALLY_VERIFIED proof
+        # (see verify_identity_proof() above).
+        if node_id not in self._known_public_keys:
+            result = self.sessions.create_session(
+                node_id=node_id, identity_status=identity_module.UNVERIFIED
+            )
+            return result.to_dict()
 
-        result = self.sessions.create_session(node_id=node_id, identity_status=identity_status)
-        response = result.to_dict()
-        if result.created:
-            response["session_id"] = result.session.session_id
-            response["expires_at_monotonic"] = result.session.expires_at_monotonic
+        expected_public_key = self._known_public_keys[node_id]
+
+        if proof_data is None:
+            # Phase 1: Issue a challenge for the caller to sign.
+            challenge = self.challenge_store.issue(
+                from_node_id=self.node_id, to_node_id=node_id
+            )
+            return {
+                "outcome": "challenge_issued",
+                "nonce": challenge.nonce,
+                "from_node_id": challenge.from_node_id,
+                "to_node_id": challenge.to_node_id,
+                "protocol_version": challenge.protocol_version,
+                "ttl_seconds": challenge.ttl_seconds,
+            }
+
+        # Phase 2: Verify the proof of private-key possession.
+        proof = identity_module.IdentityProof(**proof_data)
+        verify_result = self.challenge_store.consume(
+            proof, expected_public_key=expected_public_key
+        )
+        if not verify_result.verified:
+            return {
+                "created": False,
+                "outcome": "proof_rejected",
+                "reason": verify_result.reason,
+            }
+
+        # Proof verified -- create the session.
+        session_result = self.sessions.create_session(
+            node_id=node_id,
+            identity_status=identity_module.CRYPTOGRAPHICALLY_VERIFIED,
+        )
+        response = session_result.to_dict()
+        if session_result.created:
+            response["session_id"] = session_result.session.session_id
+            response["expires_at_monotonic"] = session_result.session.expires_at_monotonic
         return response
 
     def _authorized_capability_decision(
@@ -612,7 +667,7 @@ class LanternNode:
         data = dict(result.data)
         observation = data.get("observation")
         if observation is not None:
-            data["observation"] = asdict(observation)
+            data["observation"] = _serializable_dict(observation)
 
         return {
             "accepted": result.accepted,
@@ -698,6 +753,20 @@ class _Handler(BaseHTTPRequestHandler):
         try:
             body = self._read_json()
             if self.path == "/handshake":
+                # Malformed-input hardening: EVERY untrusted field must be
+                # type-validated BEFORE HandshakeRequest construction or
+                # evaluate_handshake(). An unvalidated field (e.g. a string
+                # capabilities value, or a non-string protocol_version
+                # reaching compatibility.parse_version()'s .lstrip) raised
+                # AttributeError -- which this handler's except tuple does
+                # not catch -- crashing the request thread and dropping the
+                # connection with no HTTP response instead of a clean 400.
+                for field in ("node_id", "protocol_version", "timestamp"):
+                    value = body.get(field)
+                    if not isinstance(value, str) or not value:
+                        raise ValueError(f"{field} must be a non-empty string")
+                if not isinstance(body.get("capabilities"), dict):
+                    raise ValueError("capabilities must be an object")
                 request = HandshakeRequest(**body)
                 response = self.node.evaluate_incoming_handshake(request)
                 self._respond(200, asdict(response))
@@ -727,17 +796,15 @@ class _Handler(BaseHTTPRequestHandler):
                 return
 
             if self.path == "/session/open":
-                # Issue a short-lived verified session for node_id, ONLY
-                # if this process already holds a CRYPTOGRAPHICALLY_
-                # VERIFIED public key for it (see LanternNode.open_session
-                # docstring). This never grants trust or authorizes any
-                # capability -- it only binds a session_id to node_id for
-                # a bounded TTL, for use as the secure /message identity
-                # credential.
+                # Two-phase: issue a challenge, then verify proof of
+                # private-key possession before creating a session.
+                # (Gate 2 Finding 9: per-request proof, not just
+                # _known_public_keys membership.)
                 node_id = body.get("node_id")
                 if not isinstance(node_id, str) or not node_id:
                     raise ValueError("node_id (string) is required")
-                self._respond(200, self.node.open_session(node_id))
+                proof_data = body.get("proof")
+                self._respond(200, self.node.open_session(node_id, proof_data=proof_data))
                 return
 
             if self.path == "/join":

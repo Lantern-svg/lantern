@@ -83,6 +83,57 @@ def _verify_identity_with_peer(peer: str, local_node_id: str, local_identity) ->
     return _request(peer + "/identity/verify", "POST", proof_data)
 
 
+def _open_session_with_proof(peer: str, node_id: str, local_identity) -> dict:
+    """Two-phase session open: request challenge, sign it, prove possession.
+
+    (Gate 2 Finding 9: per-request proof of private-key possession.)
+
+    No downgrade path: a server that returns created:true without a
+    nonce is either unpatched or malicious.  The client rejects it
+    rather than silently accepting a session with zero proof.
+    """
+    challenge_data = _request(peer + "/session/open", "POST", {"node_id": node_id})
+
+    # A patched server issues a challenge (nonce present).  A server
+    # that returns created:true with no nonce is rejected -- no
+    # silent downgrade, no backward-compat fallback.
+    if "nonce" not in challenge_data:
+        raise SystemExit(json.dumps({"status": "session_rejected", "session": challenge_data}))
+
+    # Phase 1 done: server issued a challenge.  Sign and submit.
+    session_challenge = identity_module.Challenge(
+        nonce=challenge_data["nonce"],
+        from_node_id=challenge_data["from_node_id"],
+        to_node_id=challenge_data["to_node_id"],
+        protocol_version=challenge_data["protocol_version"],
+        issued_at=0.0,
+        ttl_seconds=challenge_data.get("ttl_seconds", identity_module.DEFAULT_CHALLENGE_TTL_SECONDS),
+    )
+    binding = json.loads((local_identity.identity_dir / "binding.json").read_text())
+    session_proof = identity_module.respond_to_challenge(
+        session_challenge, local_identity, binding["signature"]
+    )
+    session = _request(peer + "/session/open", "POST", {
+        "node_id": node_id,
+        "proof": {
+            "nonce": session_proof.nonce,
+            "from_node_id": session_proof.from_node_id,
+            "to_node_id": session_proof.to_node_id,
+            "protocol_version": session_proof.protocol_version,
+            "claimed_node_id": session_proof.claimed_node_id,
+            "public_key": session_proof.public_key,
+            "identity_binding_signature": session_proof.identity_binding_signature,
+            "signature": session_proof.signature,
+            "proof_timestamp": session_proof.proof_timestamp,
+        },
+    })
+
+    if not session.get("created"):
+        raise SystemExit(json.dumps({"status": "session_rejected", "session": session}))
+
+    return session
+
+
 def _run_secure(args, local_lantern, local_handshake, remote) -> dict:
     peer = args.peer.rstrip("/")
 
@@ -97,9 +148,7 @@ def _run_secure(args, local_lantern, local_handshake, remote) -> dict:
     if not verify_result.get("verified"):
         raise SystemExit(json.dumps({"status": "identity_rejected", "identity": verify_result}))
 
-    session = _request(peer + "/session/open", "POST", {"node_id": args.node_id})
-    if not session.get("created"):
-        raise SystemExit(json.dumps({"status": "session_rejected", "session": session}))
+    session = _open_session_with_proof(peer, args.node_id, local_identity)
 
     message = create_observation_share(
         args.node_id,

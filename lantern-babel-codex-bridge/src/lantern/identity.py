@@ -208,6 +208,27 @@ def load_or_create(node_id: str, identity_dir: str | Path) -> NodeIdentity:
     if paths["private_key"].exists():
         return _load_existing(node_id, paths)
 
+    # Fail closed (identity continuity): the identity directory exists
+    # but its private-key material does not. This is either a partially
+    # deleted / corrupted established identity or a directory a caller
+    # pre-created. In both cases the node_id is *established* from the
+    # filesystem's point of view: an identity was (or was expected to
+    # be) here. Silently generating a fresh keypair here would give the
+    # same node_id a DIFFERENT cryptographic identity with no error and
+    # no audit trail -- the exact identity-fork failure mode observed
+    # in the field (see tests/test_identity_continuity.py). Refuse.
+    if paths["dir"].exists():
+        raise IdentityError(
+            f"Identity directory {paths['dir']} exists but its private-key "
+            f"material is missing -- refusing to silently generate a "
+            f"replacement identity for node_id {node_id!r}. An established "
+            "node_id whose key material is absent must never silently "
+            "acquire a different cryptographic identity. Restore the "
+            "original key material, or deliberately remove the identity "
+            "directory and re-create the identity as an explicit, "
+            "audited operator action."
+        )
+
     return _create_new(node_id, paths)
 
 
@@ -248,6 +269,20 @@ def _load_existing(node_id: str, paths: dict) -> NodeIdentity:
 
 
 def _create_new(node_id: str, paths: dict) -> NodeIdentity:
+    # Defense in depth: creation must never overwrite or fork existing
+    # identity material. If any expected identity file is already
+    # present, this directory holds (part of) an identity already --
+    # generating a new keypair here would overwrite the surviving
+    # binding.json record of the previous identity.
+    existing = [name for name in ("binding", "public_key", "private_key") if paths[name].exists()]
+    if existing:
+        raise IdentityError(
+            f"Refusing to create a new identity for node_id {node_id!r} at "
+            f"{paths['dir']}: identity material already present "
+            f"({', '.join(sorted(existing))}). Creation must never "
+            "overwrite or fork an existing identity."
+        )
+
     paths["dir"].mkdir(parents=True, exist_ok=True)
 
     signing_key = SigningKey.generate()

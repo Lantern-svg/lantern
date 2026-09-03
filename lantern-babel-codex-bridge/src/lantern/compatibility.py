@@ -28,6 +28,14 @@ from .protocol import PROTOCOL_VERSION
 # ============================================================
 
 def parse_version(version):
+    # Defense in depth: version comes from untrusted peers. It must be a
+    # non-empty string; anything else previously reached .lstrip() and
+    # raised an uncaught AttributeError in callers whose except tuples
+    # only expect ValueError (e.g. the bootstrap node HTTP handler).
+    if not isinstance(version, str) or not version.strip():
+        raise ValueError(
+            f"protocol version must be a non-empty string, got {version!r}"
+        )
     parts = version.lstrip("v").split(".")
     return tuple(int(part) for part in parts)
 

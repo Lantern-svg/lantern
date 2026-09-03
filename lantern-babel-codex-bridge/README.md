@@ -47,10 +47,16 @@ This is not a metaphor. It's how the codebase actually grew. Two examples:
 The earliest Lantern code was a `FixedPointAgent` — a simple agent anchored to an immutable `FixedPoint` (owner, purpose, rules) with a heartbeat, a memory log, and drift detection that triggered self-correction:
 
 ```python
-# Proto-Lantern: FixedPointAgent (early prototype)
+# Proto-Lantern: FixedPointAgent (early prototype — illustrative snippet,
+# not a file in this repository)
 agent._evaluate_drift()   # Count contradictions in recent memory
 agent._recenter()         # Reset to fixed point when drift > 0.5
 ```
+
+*Note: The proto-Lantern code snippets in this section are illustrative
+historical artifacts showing the conceptual evolution of the architecture.
+They are not files in this repository. The production Lantern system is
+the code in `src/lantern/`.*
 
 Through the Organogenesis Pipeline, this became:
 
@@ -67,10 +73,18 @@ Through the Organogenesis Pipeline, this became:
 The same proto-code had an ambassador mode where the agent proposed actions but could not self-authorize them — a human had to approve:
 
 ```python
-# Proto-Lantern: Ambassador Mode (early prototype)
+# Proto-Lantern: Ambassador Mode (early prototype — illustrative snippet,
+# not a file in this repository)
 action = agent.propose_action("Send message to external system")  # NOT authorized
 agent.approve_action(action)  # Human approves → action released
 ```
+
+*Note: In this prototype, `approve_action()` was a method on the agent
+itself — there was no structural enforcement preventing self-authorization.
+The prototype demonstrated the concept of proposal → approval, but the
+production authorization mechanism is the stronger enforcement layer:
+operator-controlled capability grants, `NEVER_AUTHORIZABLE` structural
+prohibition, and verified-session source binding.*
 
 Through the Organogenesis Pipeline, this became:
 
@@ -87,10 +101,19 @@ Through the Organogenesis Pipeline, this became:
 The very first Lantern code was literally about lanterns — lights that turn on and off, coordinated as a swarm:
 
 ```python
-# Proto-Lantern: Swarm coordination (earliest prototype)
+# Proto-Lantern: Swarm coordination (earliest prototype — illustrative
+# snippet, not a file in this repository)
 coord = Coordinator(bus, [Lantern("A"), Lantern("B"), Lantern("C")])
 coord.sync_all_on()  # Coordinate multiple lanterns
 ```
+
+*Note: This historical swarm coordinator was an early synchronization
+experiment. The coordinator did not possess actual authority over the
+lanterns — each lantern changed state independently. The MessageBus was
+not functionally enforcing coordination in the production sense. This
+prototype explored the concept of multi-agent synchronization, which
+later evolved into the inter-instance protocol with proper
+authorization boundaries.*
 
 Through the Organogenesis Pipeline, this became the inter-instance exchange protocol (v0.82) with Ed25519 identity verification, capability authorization, verified sessions, and evidence exchange.
 
@@ -228,9 +251,9 @@ The current codebase implements the *substrate* these systems operate on (Eviden
 
 The inter-instance protocol uses a strict three-layer authorization model:
 
-1. **Node identity** — Ed25519 keypair per node, verified via challenge/response
+1. **Node identity** — Ed25519 keypair per node, verified via challenge/response. Note: `node_id` is a UUID-based *identifier* (a label), not a cryptographic identity. The Ed25519 keypair *is* the cryptographic identity. Challenge/response proves that the responder controls the private key bound to that node_id. See [NODE_IDENTITY.md](./NODE_IDENTITY.md) for the full distinction.
 2. **Capability authorization** — operator-controlled allowlist (`--authorize node_id:capability`)
-3. **Verified sessions** — short-lived tokens bound to verified node IDs
+3. **Verified sessions** — short-lived tokens bound to the *cryptographically verified* node identity, not just the node_id label
 
 `codex_update` is in `NEVER_AUTHORIZABLE` — structurally disabled in code, not just policy-gated. No operator grant can reach it. Receiving an observation never means trusting it; only local evaluation moves belief.
 
@@ -272,7 +295,7 @@ The last row is important: Lantern has no benchmark results. The architecture is
 - Inter-instance observation exchange over HTTP [VERIFIED]
 - Read-only belief queries (belief_query) [VERIFIED locally; pending remote deployment]
 - Owner-scoped storage (_OwnedDict / _OwnedList) preventing cross-instance data leakage [VERIFIED]
-- 868 tests passing, 5 skipped [VERIFIED]
+- 927 tests passing, 7 skipped [VERIFIED]
 - Protocol version 0.82 [VERIFIED]
 - Package version 0.84 [VERIFIED]
 
@@ -341,7 +364,7 @@ resolution = kernel.resolve(contradiction.id, decision="sensor-1 is correct",
 python -m pytest tests/ -v --ignore=tests/test_service_integration.py
 ```
 
-Expected: 868 passed, 5 skipped (the 5 skipped tests require live MCP stdio or service integration environments).
+Expected: 927 passed, 7 skipped (the 5 skipped tests require live MCP stdio or service integration environments).
 
 ### Run a Node
 
@@ -399,7 +422,7 @@ lantern/
 ├── LICENSE                  # MIT
 ```
 
-**Stats:** 48 source modules, 53 test files, ~15,600 lines of Python, 868 passing tests.
+**Stats:** 48 source modules, 53 test files, ~15,600 lines of Python, 927 passing tests.
 
 ---
 

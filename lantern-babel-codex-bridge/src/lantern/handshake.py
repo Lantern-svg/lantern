@@ -100,7 +100,43 @@ def evaluate_handshake(request: HandshakeRequest, supported_capabilities=None, r
 
     response_node_id = responder_node_id if responder_node_id is not None else str(uuid.uuid4())
 
-    if not compatible_versions(PROTOCOL_VERSION, request.protocol_version):
+    # Defense in depth: evaluate_handshake() may be called directly
+    # (not only via the HTTP handler), so malformed fields must be
+    # rejected here too, and must never raise an uncaught
+    # AttributeError/TypeError from attribute access on untrusted input.
+    if not isinstance(request.protocol_version, str) or not request.protocol_version.strip():
+        return HandshakeResponse(
+            node_id=response_node_id,
+            accepted=False,
+            protocol_version=PROTOCOL_VERSION,
+            shared_capabilities={},
+            reason="Malformed protocol version",
+            timestamp=datetime.now(timezone.utc).isoformat(),
+        )
+
+    if not isinstance(request.capabilities, dict):
+        return HandshakeResponse(
+            node_id=response_node_id,
+            accepted=False,
+            protocol_version=PROTOCOL_VERSION,
+            shared_capabilities={},
+            reason="Malformed capabilities",
+            timestamp=datetime.now(timezone.utc).isoformat(),
+        )
+
+    try:
+        versions_compatible = compatible_versions(PROTOCOL_VERSION, request.protocol_version)
+    except ValueError:
+        return HandshakeResponse(
+            node_id=response_node_id,
+            accepted=False,
+            protocol_version=PROTOCOL_VERSION,
+            shared_capabilities={},
+            reason="Malformed protocol version",
+            timestamp=datetime.now(timezone.utc).isoformat(),
+        )
+
+    if not versions_compatible:
         return HandshakeResponse(
             node_id=response_node_id,
             accepted=False,

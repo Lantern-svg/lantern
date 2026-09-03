@@ -171,7 +171,12 @@ def test_resolution_is_non_destructive():
 
     after = lantern.kernel.belief("water_freezing")
 
-    assert contradiction.status == "RESOLVED"
+    # Re-fetch: with immutable Contradiction (frozen dataclass), resolve()
+    # replaces the object in the kernel list rather than mutating it in place.
+    resolved_contradiction = next(
+        c for c in lantern.kernel.contradictions if c.id == contradiction.id
+    )
+    assert resolved_contradiction.status == "RESOLVED"
     assert before == after
 
 
@@ -201,7 +206,10 @@ def test_contradiction_threading():
     latest = contradictions[-1]
 
     assert latest.supersedes == first.id
-    assert first.superseded_by == latest.id
+    # Re-fetch: with immutable Contradiction (frozen dataclass), the old
+    # contradiction is replaced in the list rather than mutated in place.
+    superseded = next(c for c in contradictions if c.id == first.id)
+    assert superseded.superseded_by == latest.id
 
 
 # ==================================================

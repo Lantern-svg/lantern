@@ -91,7 +91,35 @@ def _open_verified_session(base, tmp_path, node_id="lantern-a"):
     local_identity = identity_module.load_or_create(node_id, identity_dir)
     _verify_identity_with_peer(base, node_id, local_identity)
 
-    _, session = request(base, "/session/open", "POST", {"node_id": node_id})
+    # Two-phase session open: challenge -> sign -> proof -> session
+    # (Gate 2 Finding 9: per-request proof of private-key possession)
+    _, challenge = request(base, "/session/open", "POST", {"node_id": node_id})
+    if challenge.get("created"):
+        return challenge["session_id"]
+    challenge_obj = identity_module.Challenge(
+        nonce=challenge["nonce"],
+        from_node_id=challenge["from_node_id"],
+        to_node_id=challenge["to_node_id"],
+        protocol_version=challenge["protocol_version"],
+        issued_at=0.0,
+        ttl_seconds=challenge.get("ttl_seconds", identity_module.DEFAULT_CHALLENGE_TTL_SECONDS),
+    )
+    binding = json.loads((local_identity.identity_dir / "binding.json").read_text())
+    proof = identity_module.respond_to_challenge(challenge_obj, local_identity, binding["signature"])
+    _, session = request(base, "/session/open", "POST", {
+        "node_id": node_id,
+        "proof": {
+            "nonce": proof.nonce,
+            "from_node_id": proof.from_node_id,
+            "to_node_id": proof.to_node_id,
+            "protocol_version": proof.protocol_version,
+            "claimed_node_id": proof.claimed_node_id,
+            "public_key": proof.public_key,
+            "identity_binding_signature": proof.identity_binding_signature,
+            "signature": proof.signature,
+            "proof_timestamp": proof.proof_timestamp,
+        },
+    })
     return session["session_id"]
 
 

@@ -8,7 +8,7 @@ while adding instance ownership metadata and boundary checks sufficient to
 support personal-instance scoping in higher-level orchestration.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 import copy
@@ -19,6 +19,7 @@ import os
 import tempfile
 import uuid
 from typing import Optional
+from types import MappingProxyType
 
 from .scars import Scar, ScarRecord, create_scar as build_scar_record, persisted_record
 
@@ -100,7 +101,7 @@ class Chronicle:
         if not found: yield from self.replay()
 
 
-@dataclass
+@dataclass(frozen=True)
 class Observation:
     content: str
     source: str
@@ -109,9 +110,17 @@ class Observation:
     owner_instance: str = ""
     id: str = field(default_factory=uid)
     metadata: dict = field(default_factory=dict)
+    def __post_init__(self):
+        object.__setattr__(self, 'metadata', MappingProxyType(dict(self.metadata)))
+    def __deepcopy__(self, memo):
+        return Observation(
+            content=self.content, source=self.source, reliability=self.reliability,
+            step=self.step, owner_instance=self.owner_instance, id=self.id,
+            metadata=dict(self.metadata),
+        )
 
 
-@dataclass
+@dataclass(frozen=True)
 class Evidence:
     concept: str
     observation_id: str
@@ -125,7 +134,7 @@ class Evidence:
         return self.weight * max(0, 1 - decay_rate * age)
 
 
-@dataclass
+@dataclass(frozen=True)
 class Contradiction:
     concept: str
     evidence_snapshot: list
@@ -138,9 +147,11 @@ class Contradiction:
     resolution_id: Optional[str] = None
     supersedes: Optional[str] = None
     superseded_by: Optional[str] = None
+    def __post_init__(self):
+        object.__setattr__(self, 'evidence_snapshot', tuple(self.evidence_snapshot))
 
 
-@dataclass
+@dataclass(frozen=True)
 class ResolutionEvent:
     contradiction_id: str
     decision: str
@@ -149,6 +160,8 @@ class ResolutionEvent:
     evidence_snapshot: list
     owner_instance: str = ""
     id: str = field(default_factory=uid)
+    def __post_init__(self):
+        object.__setattr__(self, 'evidence_snapshot', tuple(self.evidence_snapshot))
 
 
 class EvidenceAccessError(PermissionError): pass
@@ -181,30 +194,48 @@ class _OwnedDict(dict):
 
 class _OwnedList(list):
     """List that refuses to append/extend/insert any item whose
-    owner_instance does not match the container's own owner_instance.
-    Same rationale as _OwnedDict, applied to EvidenceKernel.evidence,
-    .contradictions, and .resolutions.
+    owner_instance does not match the container's own owner_instance,
+    AND requires an explicit admission flag to be set before any
+    mutation. This prevents direct kernel.evidence.append() from
+    bypassing add_evidence() and its deduplication + contradiction
+    detection. Same rationale as _OwnedDict, applied to
+    EvidenceKernel.evidence, .contradictions, and .resolutions.
     """
     def __init__(self, owner_instance: str):
         super().__init__()
         self._owner_instance = owner_instance
+        self._admitting = False
     def _check(self, item):
         owner = getattr(item, "owner_instance", None)
         if owner != self._owner_instance:
             raise EvidenceAccessError(
                 f"refusing to store record owned by {owner!r} in a kernel scoped to {self._owner_instance!r}"
             )
+    def _check_admission(self):
+        if not self._admitting:
+            raise EvidenceAccessError(
+                "direct mutation of kernel evidence/contradiction/resolution "
+                "lists is not permitted; use add_evidence(), detect_contradiction(), "
+                "or resolve() instead"
+            )
     def append(self, item):
+        self._check_admission()
         self._check(item)
         super().append(item)
     def extend(self, iterable):
+        self._check_admission()
         items = list(iterable)
         for item in items:
             self._check(item)
         super().extend(items)
     def insert(self, index, item):
+        self._check_admission()
         self._check(item)
         super().insert(index, item)
+    def __setitem__(self, index, value):
+        self._check_admission()
+        self._check(value)
+        super().__setitem__(index, value)
 
 
 class EvidenceKernel:
@@ -218,8 +249,10 @@ class EvidenceKernel:
     def _copy_metadata(self, metadata: Optional[dict]) -> dict:
         return copy.deepcopy(metadata or {})
     def observe(self, content, source, reliability, metadata=None):
+        if not isinstance(reliability, (int, float)) or reliability < 0.0 or reliability > 1.0:
+            raise ValueError(f"reliability must be between 0.0 and 1.0, got {reliability!r}")
         self.step += 1
-        obs = Observation(content, source, reliability, self.step, owner_instance=self.owner_instance, metadata=self._copy_metadata(metadata))
+        obs = Observation(content, source, float(reliability), self.step, owner_instance=self.owner_instance, metadata=self._copy_metadata(metadata))
         self.observations[obs.id] = obs
         return obs
     def get_observation(self, observation_id):
@@ -228,8 +261,24 @@ class EvidenceKernel:
         return list(self.observations.values())
     def add_evidence(self, concept, observation_id, weight, sign):
         obs = self.observations[observation_id]
+        # Finding 2: Source deduplication — reject identical evidence
+        # from the same source to prevent belief inflation.
+        # Dedup identity: (concept, source, sign, weight)
+        for existing in self.evidence:
+            existing_obs = self.observations.get(existing.observation_id)
+            if existing_obs is None:
+                continue
+            if (existing.concept == concept
+                    and existing_obs.source == obs.source
+                    and existing.sign == sign
+                    and abs(existing.weight - weight * obs.reliability) < 1e-12):
+                return existing, self.latest_contradiction(concept)
         evidence = Evidence(concept, observation_id, weight * obs.reliability, sign, self.step, owner_instance=self.owner_instance)
-        self.evidence.append(evidence)
+        self.evidence._admitting = True
+        try:
+            self.evidence.append(evidence)
+        finally:
+            self.evidence._admitting = False
         contradiction = self.detect_contradiction(concept)
         return evidence, contradiction
     def belief(self, concept, at_step=None):
@@ -253,19 +302,54 @@ class EvidenceKernel:
         positive = [e for e in related if e.sign == 1]; negative = [e for e in related if e.sign == -1]
         if not positive or not negative: return None
         snapshot = sorted(e.id for e in related); latest = self.latest_contradiction(concept)
-        if latest and latest.evidence_snapshot == snapshot:
-            latest.current_severity = self.contradiction_severity(concept); return latest
+        if latest and latest.evidence_snapshot == tuple(snapshot):
+            updated = replace(latest, current_severity=self.contradiction_severity(concept))
+            idx = self.contradictions.index(latest)
+            self.contradictions._admitting = True
+            try:
+                self.contradictions[idx] = updated
+            finally:
+                self.contradictions._admitting = False
+            return updated
         contradiction = Contradiction(concept, snapshot, self.contradiction_severity(concept), self.contradiction_severity(concept), self.step, owner_instance=self.owner_instance, supersedes=latest.id if latest else None)
-        if latest: latest.superseded_by = contradiction.id
-        self.contradictions.append(contradiction)
+        if latest:
+            superseded = replace(latest, superseded_by=contradiction.id)
+            idx = self.contradictions.index(latest)
+            self.contradictions._admitting = True
+            try:
+                self.contradictions[idx] = superseded
+            finally:
+                self.contradictions._admitting = False
+        self.contradictions._admitting = True
+        try:
+            self.contradictions.append(contradiction)
+        finally:
+            self.contradictions._admitting = False
         return contradiction
     def resolve(self, contradiction_id, decision, reasoning, confidence):
         contradiction = next((c for c in self.contradictions if c.id == contradiction_id), None)
         if not contradiction: return None
         resolution = ResolutionEvent(contradiction.id, decision, reasoning, confidence, contradiction.evidence_snapshot, owner_instance=self.owner_instance)
-        contradiction.status = "RESOLVED"; contradiction.resolution_id = resolution.id; self.resolutions.append(resolution); return resolution
+        resolved = replace(contradiction, status="RESOLVED", resolution_id=resolution.id)
+        idx = self.contradictions.index(contradiction)
+        self.contradictions._admitting = True
+        self.resolutions._admitting = True
+        try:
+            self.contradictions[idx] = resolved
+            self.resolutions.append(resolution)
+        finally:
+            self.contradictions._admitting = False
+            self.resolutions._admitting = False
+        return resolution
     def snapshot(self, chronicle_chain="GENESIS", scars=None):
-        return {"owner_instance": self.owner_instance, "chronicle_chain": chronicle_chain, "step": self.step, "observations": [vars(obs) for obs in self.observations.values()], "evidence": [vars(e) for e in self.evidence], "contradictions": [vars(c) for c in self.contradictions], "resolutions": [vars(r) for r in self.resolutions], "scars": [scar.to_dict() for scar in (scars or [])]}
+        def _serializable(obj):
+            d = dict(vars(obj))
+            if "metadata" in d and not isinstance(d["metadata"], dict):
+                d["metadata"] = dict(d["metadata"])
+            if "evidence_snapshot" in d and not isinstance(d["evidence_snapshot"], list):
+                d["evidence_snapshot"] = list(d["evidence_snapshot"])
+            return d
+        return {"owner_instance": self.owner_instance, "chronicle_chain": chronicle_chain, "step": self.step, "observations": [_serializable(obs) for obs in self.observations.values()], "evidence": [_serializable(e) for e in self.evidence], "contradictions": [_serializable(c) for c in self.contradictions], "resolutions": [_serializable(r) for r in self.resolutions], "scars": [scar.to_dict() for scar in (scars or [])]}
     @classmethod
     def restore(cls, snapshot):
         kernel = cls(owner_instance=snapshot.get("owner_instance", "")); kernel.step = snapshot["step"]
@@ -274,13 +358,25 @@ class EvidenceKernel:
                 restored = Observation(**obs); kernel.observations[restored.id] = restored
         for e in snapshot["evidence"]:
             if e.get("owner_instance") == kernel.owner_instance:
-                kernel.evidence.append(Evidence(**e))
+                kernel.evidence._admitting = True
+                try:
+                    kernel.evidence.append(Evidence(**e))
+                finally:
+                    kernel.evidence._admitting = False
         for c in snapshot["contradictions"]:
             if c.get("owner_instance") == kernel.owner_instance:
-                kernel.contradictions.append(Contradiction(**c))
+                kernel.contradictions._admitting = True
+                try:
+                    kernel.contradictions.append(Contradiction(**c))
+                finally:
+                    kernel.contradictions._admitting = False
         for r in snapshot["resolutions"]:
             if r.get("owner_instance") == kernel.owner_instance:
-                kernel.resolutions.append(ResolutionEvent(**r))
+                kernel.resolutions._admitting = True
+                try:
+                    kernel.resolutions.append(ResolutionEvent(**r))
+                finally:
+                    kernel.resolutions._admitting = False
         return kernel
 
 
@@ -367,26 +463,37 @@ class Lantern:
             self.kernel.observations[obs.id] = obs; self.kernel.step = max(self.kernel.step, obs.step)
         elif event.event_type == "EVIDENCE_CREATED":
             evidence = Evidence(concept=payload["concept"], observation_id=payload["observation_id"], weight=payload["weight"], sign=payload["sign"], step=payload["step"], owner_instance=payload.get("owner_instance", self.kernel.owner_instance), id=payload["id"])
-            self.kernel.evidence.append(evidence); self.kernel.step = max(self.kernel.step, evidence.step); self.kernel.detect_contradiction(evidence.concept)
+            self.kernel.evidence._admitting = True
+            try:
+                self.kernel.evidence.append(evidence)
+            finally:
+                self.kernel.evidence._admitting = False
+            self.kernel.step = max(self.kernel.step, evidence.step); self.kernel.detect_contradiction(evidence.concept)
         elif event.event_type == "CONTRADICTION_RESOLVED":
             contradiction = next((c for c in self.kernel.contradictions if c.id == payload["contradiction"]), None)
             if contradiction:
-                contradiction.status = "RESOLVED"; contradiction.resolution_id = payload["id"]
-                self.kernel.resolutions.append(ResolutionEvent(contradiction_id=payload["contradiction"], decision=payload["decision"], reasoning=payload["reasoning"], confidence=payload["confidence"], evidence_snapshot=payload["evidence_snapshot"], owner_instance=payload.get("owner_instance", self.kernel.owner_instance), id=payload["id"]))
+                resolved = replace(contradiction, status="RESOLVED", resolution_id=payload["id"])
+                idx = self.kernel.contradictions.index(contradiction)
+                self.kernel.contradictions._admitting = True
+                try:
+                    self.kernel.contradictions[idx] = resolved
+                    self.kernel.resolutions.append(ResolutionEvent(contradiction_id=payload["contradiction"], decision=payload["decision"], reasoning=payload["reasoning"], confidence=payload["confidence"], evidence_snapshot=payload["evidence_snapshot"], owner_instance=payload.get("owner_instance", self.kernel.owner_instance), id=payload["id"]))
+                finally:
+                    self.kernel.contradictions._admitting = False
         elif event.event_type == "SCAR_RECORDED": self.scars[Scar.from_dict(payload).id] = Scar.from_dict(payload)
     def _apply_to_runtime(self, event): self._apply_to_kernel(event)
     def observe(self, content, source, reliability, metadata=None):
-        obs = self.kernel.observe(content, source, reliability, metadata); self.bus.publish(KernelEvent("OBSERVATION_CREATED", "kernel", {"id": obs.id, "content": content, "source": obs.source, "reliability": obs.reliability, "step": obs.step, "metadata": obs.metadata, "owner_instance": obs.owner_instance})); return obs
+        obs = self.kernel.observe(content, source, reliability, metadata); self.bus.publish(KernelEvent("OBSERVATION_CREATED", "kernel", {"id": obs.id, "content": content, "source": obs.source, "reliability": obs.reliability, "step": obs.step, "metadata": dict(obs.metadata), "owner_instance": obs.owner_instance})); return obs
     def add_evidence(self, concept, observation_id, weight, sign):
         evidence, contradiction = self.kernel.add_evidence(concept, observation_id, weight, sign)
         self.bus.publish(KernelEvent("EVIDENCE_CREATED", "kernel", {"id": evidence.id, "concept": concept, "observation_id": evidence.observation_id, "weight": evidence.weight, "sign": evidence.sign, "step": evidence.step, "owner_instance": evidence.owner_instance}))
         self.bus.publish(KernelEvent("BELIEF_UPDATED", "kernel", {"concept": concept, "belief": self.kernel.belief(concept)}))
         if contradiction:
-            self.bus.publish(KernelEvent("CONTRADICTION_DETECTED", "kernel", {"id": contradiction.id, "concept": concept, "evidence_snapshot": contradiction.evidence_snapshot, "historical_severity": contradiction.historical_severity, "current_severity": contradiction.current_severity, "created_step": contradiction.created_step, "status": contradiction.status, "resolution_id": contradiction.resolution_id, "supersedes": contradiction.supersedes, "superseded_by": contradiction.superseded_by, "owner_instance": contradiction.owner_instance}))
+            self.bus.publish(KernelEvent("CONTRADICTION_DETECTED", "kernel", {"id": contradiction.id, "concept": concept, "evidence_snapshot": list(contradiction.evidence_snapshot), "historical_severity": contradiction.historical_severity, "current_severity": contradiction.current_severity, "created_step": contradiction.created_step, "status": contradiction.status, "resolution_id": contradiction.resolution_id, "supersedes": contradiction.supersedes, "superseded_by": contradiction.superseded_by, "owner_instance": contradiction.owner_instance}))
         return evidence
     def resolve(self, contradiction_id, decision, reasoning, confidence):
         resolution = self.kernel.resolve(contradiction_id, decision, reasoning, confidence)
-        if resolution: self.bus.publish(KernelEvent("CONTRADICTION_RESOLVED", "kernel", {"id": resolution.id, "contradiction": contradiction_id, "decision": resolution.decision, "reasoning": resolution.reasoning, "confidence": resolution.confidence, "evidence_snapshot": resolution.evidence_snapshot, "owner_instance": resolution.owner_instance}))
+        if resolution: self.bus.publish(KernelEvent("CONTRADICTION_RESOLVED", "kernel", {"id": resolution.id, "contradiction": contradiction_id, "decision": resolution.decision, "reasoning": resolution.reasoning, "confidence": resolution.confidence, "evidence_snapshot": list(resolution.evidence_snapshot), "owner_instance": resolution.owner_instance}))
         return resolution
     def create_scar(self, **kwargs) -> ScarRecord: return build_scar_record(**kwargs)
     def persist_scar(self, record: ScarRecord) -> ScarRecord:
