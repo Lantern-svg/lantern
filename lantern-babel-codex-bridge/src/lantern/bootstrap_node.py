@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import json
 import time
+import urllib.parse
 from dataclasses import asdict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -610,7 +611,86 @@ class _Handler(BaseHTTPRequestHandler):
                 },
             )
             return
+        if self.path.startswith("/observations/"):
+            self._handle_get_observation(self.path[len("/observations/") :])
+            return
         self._respond(404, {"error": "Not found"})
+
+    def _handle_get_observation(self, raw_suffix: str) -> None:
+        """GET /observations/<observation_id>?session_id=<session_id>
+
+        STRICTLY SELF-ONLY. This endpoint lets a node read back an
+        Observation it already accepted into its OWN local Lantern
+        state (via receive_observation()/agent.observe()) -- it is not
+        a peer-to-peer read primitive. A remote peer's valid
+        evidence_exchange authorization/session for ITSELF grants zero
+        access here; only a caller who holds a valid, unexpired session
+        whose authenticated node_id equals THIS node's own node_id
+        (self.node.node_id) may read.
+
+        Deliberately does NOT use the observation's own `source` field
+        for this decision (a hostile/malformed observation could claim
+        any source) -- the only trust anchor is the already-verified
+        session table, exactly as /message uses it.
+
+        Reuses existing primitives verbatim: verified_session's
+        resolve_session() for auth (same call /message makes) and
+        core.EvidenceKernel.get_observation() for the read (already
+        existed in-process, never previously exposed over HTTP). No new
+        message type, no protocol change, no new capability name.
+        """
+        parsed = urllib.parse.urlsplit(raw_suffix)
+        observation_id = urllib.parse.unquote(parsed.path)
+        query = urllib.parse.parse_qs(parsed.query)
+        session_ids = query.get("session_id") or []
+        session_id = session_ids[0] if session_ids else None
+
+        if not observation_id:
+            self._respond(404, {"error": "Not found"})
+            return
+
+        if not isinstance(session_id, str) or not session_id:
+            self._respond(
+                401,
+                {"error": "session_id query parameter is required"},
+            )
+            return
+
+        lookup = self.node.sessions.resolve_session(session_id=session_id)
+        if not lookup.valid:
+            self._respond(
+                401,
+                {"error": f"{lookup.outcome}: {lookup.reason}"},
+            )
+            return
+
+        # Decisive self-only check: authenticated session's node_id must
+        # equal THIS node's own node_id. A perfectly valid session for
+        # some OTHER node_id (even one this node fully authorizes for
+        # evidence_exchange) is rejected here -- this is not an
+        # authorization/capability check, it is an identity-equality
+        # check against this process's own node_id.
+        if lookup.node_id != self.node.node_id:
+            self._respond(
+                403,
+                {"error": "observation retrieval is restricted to this node's own authenticated session"},
+            )
+            return
+
+        observation = self.node.agent.lantern.kernel.get_observation(observation_id)
+        if observation is None:
+            self._respond(404, {"error": "Unknown observation_id"})
+            return
+
+        self._respond(
+            200,
+            {
+                "observation_id": observation.id,
+                "content": observation.content,
+                "source": observation.source,
+                "metadata": dict(observation.metadata or {}),
+            },
+        )
 
     def do_POST(self):  # noqa: N802 - BaseHTTPRequestHandler API
         try:
