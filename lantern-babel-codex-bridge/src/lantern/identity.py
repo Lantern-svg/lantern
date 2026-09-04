@@ -140,6 +140,31 @@ class IdentityError(Exception):
 
 
 # ============================================================
+# Witness rejection codes (LAR-1) -- machine-testable, explicit
+# ============================================================
+
+IDENTITY_PREVIOUSLY_REGISTERED = "IDENTITY_PREVIOUSLY_REGISTERED"
+NODE_ID_RETIRED = "NODE_ID_RETIRED"
+FORK_DETECTED = "FORK_DETECTED"
+REGISTRY_CORRUPTED = "REGISTRY_CORRUPTED"
+NOT_REGISTERED = "NOT_REGISTERED"
+RECOVER_KEY_MISMATCH = "RECOVER_KEY_MISMATCH"
+
+
+class WitnessError(IdentityError):
+    """Fail-closed rejection by the Identity Witness Ledger.
+
+    The witness is a witness, not an authority: it refuses unsafe
+    states; it never repairs, rotates, regenerates, or overwrites
+    identity state. ``code`` is machine-testable.
+    """
+
+    def __init__(self, code: str, message: str):
+        super().__init__(f"{code}: {message}")
+        self.code = code
+
+
+# ============================================================
 # Storage
 # ============================================================
 
@@ -191,7 +216,9 @@ def default_identity_dir(data_dir: str | Path, node_id: str) -> Path:
     return Path(data_dir) / "identity" / node_id
 
 
-def load_or_create(node_id: str, identity_dir: str | Path) -> NodeIdentity:
+def load_or_create(
+    node_id: str, identity_dir: str | Path, witness=None
+) -> NodeIdentity:
     """Load an existing identity, or generate + persist a new one.
 
     identity_dir is fully caller-configurable -- it is never implicitly
@@ -201,12 +228,55 @@ def load_or_create(node_id: str, identity_dir: str | Path) -> NodeIdentity:
     this function does not silently nest itself inside a chronicle
     path, but it also does not forbid a caller from misconfiguring
     that -- see architecture-level test for an explicit assertion.
+
+    witness (LAR-1): optional Identity Witness Ledger. Default None
+    reproduces EXACTLY the pre-LAR-1 behavior. When supplied, the
+    reconciliation matrix from the LAR-1 spec is enforced BEFORE any
+    caller can bind a socket or write a Chronicle record:
+
+        local absent + ledger absent     -> create + REGISTER (atomic;
+                                           local dir rolled back if
+                                           registration fails)
+        local absent + ledger active     -> FAIL CLOSED
+                                           IDENTITY_PREVIOUSLY_REGISTERED
+        local absent + ledger retired    -> FAIL CLOSED NODE_ID_RETIRED
+        local present + ledger absent    -> backfill REGISTER, proceed
+        local present + matching active  -> normal operation
+        local present + mismatching key  -> FAIL CLOSED FORK_DETECTED
+        local present + ledger retired   -> FAIL CLOSED NODE_ID_RETIRED
+        any          + invalid chain     -> FAIL CLOSED REGISTRY_CORRUPTED
     """
     identity_dir = Path(identity_dir)
     paths = _identity_paths(identity_dir)
 
+    witness_status = None
+    witness_public_key = None
+    if witness is not None:
+        # Registry-corruption is detected regardless of local state.
+        witness_status, witness_public_key = witness.lookup(node_id)
+
     if paths["private_key"].exists():
-        return _load_existing(node_id, paths)
+        identity = _load_existing(node_id, paths)
+        if witness is not None:
+            if witness_status == "absent":
+                # First LAR-1 boot for a pre-existing identity: backfill
+                # the witness, then proceed. Refuses on any conflict.
+                witness.register(node_id, identity, backfill=True)
+            elif witness_status == "retired":
+                raise WitnessError(
+                    NODE_ID_RETIRED,
+                    f"node_id {node_id!r} is retired in the witness ledger; "
+                    "a retired node_id is permanently dead. Use a new node_id.",
+                )
+            elif witness_public_key != identity.public_key_hex:
+                raise WitnessError(
+                    FORK_DETECTED,
+                    f"local identity for node_id {node_id!r} holds public key "
+                    f"{identity.public_key_hex} but the witness ledger recorded "
+                    f"{witness_public_key}. Same node_id + different key is a "
+                    "fork -- never rotation or recovery.",
+                )
+        return identity
 
     # Fail closed (identity continuity): the identity directory exists
     # but its private-key material does not. This is either a partially
@@ -228,6 +298,41 @@ def load_or_create(node_id: str, identity_dir: str | Path) -> NodeIdentity:
             "directory and re-create the identity as an explicit, "
             "audited operator action."
         )
+
+    if witness is not None:
+        if witness_status == "active":
+            # TOTAL local loss: the ledger remembers a prior key. Silent
+            # regeneration here would be the exact fork this closes.
+            raise WitnessError(
+                IDENTITY_PREVIOUSLY_REGISTERED,
+                f"no local identity for node_id {node_id!r}, but the witness "
+                f"ledger records it as registered to public key "
+                f"{witness_public_key}. Restore from an operator backup and "
+                "run the RECOVER ceremony, or explicitly FORCE_RETIRE the "
+                "node_id and continue under a NEW node_id. The system will "
+                "not silently create a second identity for an established "
+                "node_id.",
+            )
+        if witness_status == "retired":
+            raise WitnessError(
+                NODE_ID_RETIRED,
+                f"node_id {node_id!r} is retired in the witness ledger; a "
+                "retired node_id can never be associated with another key. "
+                "A replacement identity requires a new node_id.",
+            )
+        # local absent + ledger absent: create + REGISTER atomically.
+        identity = _create_new(node_id, paths)
+        try:
+            witness.register(node_id, identity)
+        except BaseException:
+            # Roll back the just-created local identity so a failed
+            # registration never leaves a partially initialized
+            # identity behind. This directory did not exist on entry.
+            import shutil
+
+            shutil.rmtree(paths["dir"], ignore_errors=True)
+            raise
+        return identity
 
     return _create_new(node_id, paths)
 
