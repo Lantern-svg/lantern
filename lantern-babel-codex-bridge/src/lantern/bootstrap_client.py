@@ -28,6 +28,7 @@ from pathlib import Path
 from urllib.request import Request, urlopen
 
 from . import identity as identity_module
+from . import secret_transfer
 from .compatibility import DEFAULT_CAPABILITIES
 from .continuity import local_watermark
 from .core import Chronicle, Lantern
@@ -266,3 +267,83 @@ def main(argv=None):
 
 if __name__ == "__main__":
     main()
+
+
+def send_secret(peer: str, node_id: str, local_identity, secret: str, session_id: str | None = None) -> dict:
+    """Confidentially transfer a secret to a peer over the existing
+    authenticated Lantern session.
+
+    Reference consumer of the secret-transfer protocol (secret_transfer.py):
+      1. prove identity (existing /identity/* flow) if the peer does not
+         already know this node
+      2. open a two-phase PoP session (or reuse a provided one)
+      3. offer an ephemeral X25519 key, signed by the local identity
+      4. authenticate the peer's key-agreement response (TOFU)
+      5. seal the secret (XSalsa20-Poly1305 AEAD) and send it
+      6. verify the peer's receipt digest against the locally computed
+         digest, and confirm vault holding via /secret/receipt
+
+    The plaintext secret never leaves this process except inside the
+    AEAD envelope. The returned dict contains digests and identifiers
+    ONLY -- never the secret.
+    """
+    import uuid
+
+    peer = peer.rstrip("/")
+    secret_id = uuid.uuid4().hex
+
+    _verify_identity_with_peer(peer, node_id, local_identity)
+    if session_id is None:
+        session = _open_session_with_proof(peer, node_id, local_identity)
+        session_id = session["session_id"]
+
+    offer, eph_private_hex = secret_transfer.create_secret_offer(
+        session_id=session_id, secret_id=secret_id, identity=local_identity,
+    )
+    offer_response = _request(
+        peer + "/secret/offer", "POST",
+        {"session_id": session_id, "node_id": node_id, "offer": offer},
+    )
+    if not offer_response.get("accepted"):
+        return {"accepted": False, "stage": "offer", "reason": offer_response.get("reason")}
+
+    if not secret_transfer.verify_secret_response(
+        response=offer_response, client_offer=offer,
+        session_id=session_id, secret_id=secret_id,
+    ):
+        return {"accepted": False, "stage": "offer", "reason": "SERVER_RESPONSE_SIGNATURE_INVALID"}
+
+    box = secret_transfer.Box(
+        secret_transfer.PrivateKey(bytes.fromhex(eph_private_hex)),
+        secret_transfer.PublicKey(bytes.fromhex(offer_response["server_eph_pub"])),
+    )
+    sealed, local_digest = secret_transfer.seal_secret(
+        box, secret=secret, secret_id=secret_id,
+        session_id=session_id, sender_node_id=node_id,
+    )
+    seal_response = _request(
+        peer + "/secret/seal", "POST",
+        {
+            "session_id": session_id, "node_id": node_id, "secret_id": secret_id,
+            "nonce": sealed["nonce"], "ciphertext": sealed["ciphertext"],
+        },
+    )
+    if not seal_response.get("received"):
+        return {"accepted": False, "stage": "seal", "reason": seal_response.get("reason")}
+    if seal_response.get("digest") != local_digest:
+        return {"accepted": False, "stage": "seal", "reason": "DIGEST_MISMATCH"}
+
+    receipt = _request(
+        peer + "/secret/receipt", "POST",
+        {"session_id": session_id, "node_id": node_id, "secret_id": secret_id},
+    )
+    return {
+        "accepted": receipt.get("held") is True,
+        "received": True,
+        "secret_id": secret_id,
+        "session_id": session_id,
+        "digest": local_digest,
+        "received_digest": seal_response.get("digest"),
+        "receipt_digest": receipt.get("digest"),
+        "server_public_key_hex": offer_response["server_public_key_hex"],
+    }

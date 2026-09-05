@@ -25,6 +25,10 @@ CANONICAL_CAPABILITIES = {
     "evidence_exchange": True,
     "belief_query": True,
     "contradiction_tracking": True,
+    # Confidential secret transfer (secret_transfer.py): distinct
+    # operation with its own capability grant -- sending/receiving
+    # sealed secrets is separately authorized from evidence exchange.
+    "secret_transfer": True,
     "snapshot_exchange": True,
     "handshake": True,
     "codex_update": False,

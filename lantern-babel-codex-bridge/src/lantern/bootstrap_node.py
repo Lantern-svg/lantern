@@ -64,6 +64,7 @@ from .heartbeat import create_heartbeat, evaluate_connection
 from . import identity as identity_module
 from .witness_ledger import IdentityWitness
 from . import observation_exchange
+from . import secret_transfer
 from .participants import find as find_participant
 from .participants import inspect_all, next_verification_step
 from .protocol import PROTOCOL_VERSION, ProtocolMessage
@@ -180,6 +181,10 @@ class LanternNode:
             )
         self.crypto_identity = identity_module.load_or_create(node_id, identity_dir, witness=witness)
         self.challenge_store = identity_module.ChallengeStore()
+        # Secret transfer: in-memory only. Never persisted, never in
+        # Chronicle/EvidenceKernel, never logged.
+        self.secret_vault = secret_transfer.SecretVault()
+        self._pending_secret_offers = {}
         # node_id -> public_key_hex, recorded the first time this process
         # sees a CRYPTOGRAPHICALLY_VERIFIED proof for that node_id. Used
         # for trust-on-first-use pinning: a later proof for the same
@@ -432,6 +437,144 @@ class LanternNode:
             response["session_id"] = session_result.session.session_id
             response["expires_at_monotonic"] = session_result.session.expires_at_monotonic
         return response
+
+    def secret_transfer_offer(self, session_id: str, node_id: str, offer: dict) -> dict:
+        """Phase 1 of confidential secret transfer: authenticated key
+        agreement over an EXISTING two-phase PoP session.
+
+        Reuses the exact session-resolution and capability-authorization
+        path as receive_secure()/retrieve_observation() -- never
+        reimplemented here. The client's ephemeral X25519 key must be
+        signed by the ALREADY-VERIFIED identity key for node_id.
+        """
+        lookup = self.sessions.resolve_session(session_id=session_id, expected_source=node_id)
+        if not lookup.valid:
+            return {"accepted": False, "reason": f"{lookup.outcome}: {lookup.reason}"}
+        decision = self._authorized_capability_decision(
+            lookup.node_id, requested=[secret_transfer.CAPABILITY]
+        )
+        if not decision.is_authorized(secret_transfer.CAPABILITY):
+            return {
+                "accepted": False,
+                "reason": (
+                    f"'{secret_transfer.CAPABILITY}' is not in "
+                    f"authorized_capabilities for '{lookup.node_id}'"
+                ),
+            }
+        if node_id not in self._known_public_keys:
+            return {"accepted": False, "reason": "IDENTITY_NOT_VERIFIED"}
+        if not secret_transfer.verify_secret_offer(
+            offer=offer, session_id=session_id,
+            expected_public_key_hex=self._known_public_keys[node_id],
+        ):
+            return {"accepted": False, "reason": "OFFER_SIGNATURE_INVALID"}
+        secret_id = offer["secret_id"]
+        pending = self._pending_secret_offers.get(secret_id)
+        if pending is not None and pending["expires_monotonic"] > time.monotonic():
+            return {"accepted": False, "reason": "OFFER_ALREADY_PENDING"}
+        if self.secret_vault.peek(secret_id) is not None:
+            return {"accepted": False, "reason": "SECRET_ID_ALREADY_HELD"}
+        response, box = secret_transfer.build_secret_response(
+            client_offer=offer, session_id=session_id, secret_id=secret_id,
+            server_identity=self.crypto_identity,
+        )
+        self._pending_secret_offers[secret_id] = {
+            "sender_node_id": lookup.node_id,
+            "session_id": session_id,
+            "box": box,
+            "expires_monotonic": time.monotonic() + response["ttl_seconds"],
+        }
+        return {"accepted": True, **response}
+
+    def secret_transfer_seal(self, session_id: str, node_id: str, secret_id: str,
+                              nonce: str, ciphertext: str) -> dict:
+        """Phase 2: unseal, verify, and hold the secret in memory.
+
+        The pending offer is consumed EXACTLY ONCE (popped before any
+        processing) -- a replayed seal finds no pending offer. On any
+        failure the material is dropped; failures never echo decrypted
+        content or the secret.
+        """
+        lookup = self.sessions.resolve_session(session_id=session_id, expected_source=node_id)
+        if not lookup.valid:
+            return {"accepted": False, "reason": f"{lookup.outcome}: {lookup.reason}"}
+        decision = self._authorized_capability_decision(
+            lookup.node_id, requested=[secret_transfer.CAPABILITY]
+        )
+        if not decision.is_authorized(secret_transfer.CAPABILITY):
+            return {
+                "accepted": False,
+                "reason": (
+                    f"'{secret_transfer.CAPABILITY}' is not in "
+                    f"authorized_capabilities for '{lookup.node_id}'"
+                ),
+            }
+        pending = self._pending_secret_offers.pop(secret_id, None)
+        if pending is None:
+            return {"accepted": False, "reason": "NO_PENDING_OFFER"}
+        if pending["session_id"] != session_id or pending["sender_node_id"] != lookup.node_id:
+            return {"accepted": False, "reason": "OFFER_CONTEXT_MISMATCH"}
+        if pending["expires_monotonic"] <= time.monotonic():
+            return {"accepted": False, "reason": "OFFER_EXPIRED"}
+        try:
+            inner = secret_transfer.unseal_secret(
+                box=pending["box"], nonce_hex=nonce, ciphertext_hex=ciphertext,
+            )
+        except Exception:
+            return {"accepted": False, "reason": "SEAL_DECRYPT_FAILED"}
+        if (
+            inner.get("secret_id") != secret_id
+            or inner.get("session_id") != session_id
+            or inner.get("sender_node_id") != lookup.node_id
+            or not isinstance(inner.get("secret"), str)
+            or not inner.get("secret")
+        ):
+            return {"accepted": False, "reason": "SEAL_CONTEXT_MISMATCH"}
+        secret_bytes = inner["secret"].encode("utf-8")
+        digest = hashlib.sha256(secret_bytes).hexdigest()
+        if digest != inner.get("digest"):
+            return {"accepted": False, "reason": "SEAL_DIGEST_MISMATCH"}
+        self.secret_vault.store(
+            secret_id=secret_id, secret_bytes=secret_bytes, digest=digest,
+            sender_node_id=lookup.node_id, session_id=session_id,
+        )
+        return {
+            "accepted": True,
+            "received": True,
+            "secret_id": secret_id,
+            "digest": digest,
+            "vault_ttl_seconds": secret_transfer.VAULT_TTL_SECONDS,
+        }
+
+    def secret_transfer_receipt(self, session_id: str, node_id: str, secret_id: str) -> dict:
+        """Proof of holding WITHOUT exposure: returns only the stored
+        digest. Only the original sender's authenticated session may
+        ask; any other node gets SECRET_NOT_YOURS."""
+        lookup = self.sessions.resolve_session(session_id=session_id, expected_source=node_id)
+        if not lookup.valid:
+            return {"held": False, "reason": f"{lookup.outcome}: {lookup.reason}"}
+        decision = self._authorized_capability_decision(
+            lookup.node_id, requested=[secret_transfer.CAPABILITY]
+        )
+        if not decision.is_authorized(secret_transfer.CAPABILITY):
+            return {
+                "held": False,
+                "reason": (
+                    f"'{secret_transfer.CAPABILITY}' is not in "
+                    f"authorized_capabilities for '{lookup.node_id}'"
+                ),
+            }
+        entry = self.secret_vault.peek(secret_id)
+        if entry is None:
+            return {"held": False, "reason": "SECRET_NOT_FOUND"}
+        if entry["sender_node_id"] != lookup.node_id:
+            return {"held": False, "reason": "SECRET_NOT_YOURS"}
+        return {
+            "held": True,
+            "secret_id": secret_id,
+            "digest": entry["digest"],
+            "seconds_remaining": max(0.0, entry["expires_monotonic"] - time.monotonic()),
+        }
 
     def _authorized_capability_decision(
         self, node_id: str, *, requested: list[str] | None = None
@@ -1159,6 +1302,66 @@ class _Handler(BaseHTTPRequestHandler):
                     self.node.retrieve_observation(
                         session_id, source_node_id, observation_id
                     ),
+                )
+                return
+
+            if self.path == "/secret/offer":
+                session_id = body.get("session_id")
+                node_id = body.get("node_id")
+                offer = body.get("offer")
+                for name, value in (
+                    ("session_id", session_id),
+                    ("node_id", node_id),
+                ):
+                    if not isinstance(value, str) or not value:
+                        raise ValueError(f"{name} (string) is required")
+                if not isinstance(offer, dict):
+                    raise ValueError("offer (object) is required")
+                for name in ("secret_id", "eph_pub", "sig"):
+                    value = offer.get(name)
+                    if not isinstance(value, str) or not value:
+                        raise ValueError(f"offer.{name} (string) is required")
+                self._respond(
+                    200,
+                    self.node.secret_transfer_offer(session_id, node_id, offer),
+                )
+                return
+
+            if self.path == "/secret/seal":
+                session_id = body.get("session_id")
+                node_id = body.get("node_id")
+                secret_id = body.get("secret_id")
+                nonce = body.get("nonce")
+                ciphertext = body.get("ciphertext")
+                for name, value in (
+                    ("session_id", session_id),
+                    ("node_id", node_id),
+                    ("secret_id", secret_id),
+                    ("nonce", nonce),
+                    ("ciphertext", ciphertext),
+                ):
+                    if not isinstance(value, str) or not value:
+                        raise ValueError(f"{name} (string) is required")
+                self._respond(
+                    200,
+                    self.node.secret_transfer_seal(session_id, node_id, secret_id, nonce, ciphertext),
+                )
+                return
+
+            if self.path == "/secret/receipt":
+                session_id = body.get("session_id")
+                node_id = body.get("node_id")
+                secret_id = body.get("secret_id")
+                for name, value in (
+                    ("session_id", session_id),
+                    ("node_id", node_id),
+                    ("secret_id", secret_id),
+                ):
+                    if not isinstance(value, str) or not value:
+                        raise ValueError(f"{name} (string) is required")
+                self._respond(
+                    200,
+                    self.node.secret_transfer_receipt(session_id, node_id, secret_id),
                 )
                 return
 

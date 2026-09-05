@@ -59,6 +59,11 @@ DEFAULT_CAPABILITIES = {
     # exists for letting remote claims influence local state.
     "codex_update": False,
     "belief_query": True,
+    # Confidential secret transfer over an authenticated session
+    # (secret_transfer.py). Distinct operation with distinct
+    # authorization: a node must be explicitly granted this to send
+    # or receive sealed secrets.
+    "secret_transfer": True,
     "contradiction_tracking": True,
     "snapshot_exchange": True,
     "handshake": True,
