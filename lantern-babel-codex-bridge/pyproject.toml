@@ -16,6 +16,9 @@ dependencies = [
     "PyNaCl>=1.5.0",
 ]
 
+[project.scripts]
+lantern-connector = "lantern.connector:main"
+
 [project.optional-dependencies]
 dev = [
     "pytest>=7.0",

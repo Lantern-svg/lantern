@@ -660,3 +660,38 @@ def test_restart_recovers_chronicle_and_snapshot_across_processes(tmp_path):
         assert health["watermark"]["chain"] == chronicle.chain
     finally:
         _stop(second)
+
+
+def test_malformed_handshake_string_capabilities_rejected_cleanly(lantern_b):
+    """Regression: POST /handshake with capabilities as a string (not an
+    object) must be rejected with a clean HTTP 400, not crash the handler
+    thread and drop the connection with no response (AttributeError from
+    evaluate_handshake's .items() call was previously uncaught). The node
+    must remain fully operational afterward: a subsequent GET /health and
+    a valid POST /handshake must both succeed."""
+    base, *_ = lantern_b
+
+    # Malformed handshake: capabilities is a string, not an object.
+    with pytest.raises(HTTPError) as error:
+        _request(
+            base + "/handshake", "POST",
+            {
+                "node_id": "malformed-peer",
+                "protocol_version": "0.82",
+                "capabilities": "not-a-dict",
+                "timestamp": "2026-01-01T00:00:00+00:00",
+            },
+        )
+    assert error.value.code == 400
+    assert "capabilities must be an object" in error.value.read().decode()
+
+    # Node still alive and healthy after the malformed request.
+    with urlopen(base + "/health", timeout=3) as response:
+        assert response.status == 200
+
+    # Normal operation unaffected: a valid handshake still succeeds.
+    from lantern.handshake import create_handshake
+    from dataclasses import asdict
+    status, result = _request(base + "/handshake", "POST", asdict(create_handshake()))
+    assert status == 200
+    assert result["accepted"] is True

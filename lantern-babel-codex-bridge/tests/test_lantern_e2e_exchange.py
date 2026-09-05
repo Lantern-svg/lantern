@@ -133,6 +133,43 @@ def node_b(tmp_path):
         _stop(process)
 
 
+def _open_session_via_proof(*, base: str, node_id: str, local_identity) -> dict:
+    """Two-phase /session/open for a caller that has already completed
+    /identity/verify (this is the initiator-side analogue of
+    _self_open_session's own inline version -- kept as one shared helper
+    so the two-phase mechanics exist in exactly one place in this test
+    file, mirroring bootstrap_client.py's own
+    `_open_session_with_proof`). Returns the full session dict; caller
+    asserts on `created`.
+    """
+    _, challenge_body = _request(base + "/session/open", "POST", {"node_id": node_id})
+    assert "nonce" in challenge_body, challenge_body
+
+    challenge = identity_module.Challenge(
+        nonce=challenge_body["nonce"],
+        from_node_id=challenge_body["from_node_id"],
+        to_node_id=challenge_body["to_node_id"],
+        protocol_version=challenge_body["protocol_version"],
+        issued_at=0.0,
+        ttl_seconds=challenge_body.get("ttl_seconds", identity_module.DEFAULT_CHALLENGE_TTL_SECONDS),
+    )
+    binding = json.loads((local_identity.identity_dir / "binding.json").read_text())
+    proof = identity_module.respond_to_challenge(challenge, local_identity, binding["signature"])
+    proof_payload = {
+        "nonce": proof.nonce,
+        "from_node_id": proof.from_node_id,
+        "to_node_id": proof.to_node_id,
+        "protocol_version": proof.protocol_version,
+        "claimed_node_id": proof.claimed_node_id,
+        "public_key": proof.public_key,
+        "identity_binding_signature": proof.identity_binding_signature,
+        "signature": proof.signature,
+        "proof_timestamp": proof.proof_timestamp,
+    }
+    _, session = _request(base + "/session/open", "POST", {"node_id": node_id, "proof": proof_payload})
+    return session
+
+
 def _secure_send(
     *, peer_base: str, sender_node_id: str, sender_data_dir: Path, content: str, source: str
 ) -> dict:
@@ -152,7 +189,7 @@ def _secure_send(
     verify_result = _verify_identity_with_peer(peer_base, sender_node_id, sender_identity)
     assert verify_result.get("verified") is True, verify_result
 
-    _, session = _request(peer_base + "/session/open", "POST", {"node_id": sender_node_id})
+    session = _open_session_via_proof(base=peer_base, node_id=sender_node_id, local_identity=sender_identity)
     assert session.get("created") is True, session
 
     message = create_observation_share(sender_node_id, {"content": content, "source": source, "reliability": 1.0})
@@ -196,7 +233,7 @@ def _self_open_session(*, base: str, node_id: str, data_dir: Path) -> str:
     verify_result = _verify_identity_with_peer(base, node_id, node_identity)
     assert verify_result.get("verified") is True, verify_result
 
-    _, session = _request(base + "/session/open", "POST", {"node_id": node_id})
+    session = _open_session_via_proof(base=base, node_id=node_id, local_identity=node_identity)
     assert session.get("created") is True, session
     return session["session_id"]
 

@@ -14,9 +14,12 @@ operator's normal TLS, authentication, and firewall controls.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import os
 import time
 import urllib.parse
+from datetime import datetime, timezone
 from dataclasses import asdict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -26,16 +29,44 @@ from .agent import LanternAgent
 from .bridge import LanternAgentBridge
 from . import capability_authorization
 from .capability_authorization import AuthorizationPolicy, EMPTY_POLICY
+from .deployment_config import resolve_config
 from .compatibility import DEFAULT_CAPABILITIES, negotiate
 from .continuity import local_watermark
 from .core import Chronicle, Lantern
-from .handshake import HandshakeRequest, create_handshake, evaluate_handshake
+
+# Serialization boundary: converts frozen-dataclass fields that are
+# immutable (MappingProxyType, tuple) into JSON-serializable native types.
+# This is the ONLY place where immutable internal structures are unwrapped
+# for external consumption. Internal code always sees the immutable forms.
+from types import MappingProxyType as _MappingProxyType
+
+def _serializable_dict(obj):
+    """Convert a frozen dataclass to a JSON-safe dict.
+
+    MappingProxyType → dict, tuple → list, everything else passes through.
+    """
+    result = {}
+    for key, value in obj.__dict__.items():
+        if isinstance(value, _MappingProxyType):
+            result[key] = dict(value)
+        elif isinstance(value, tuple):
+            result[key] = list(value)
+        else:
+            result[key] = value
+    return result
+from .handshake import (
+    HandshakeRequest,
+    HandshakeResponse,
+    create_handshake,
+    evaluate_handshake,
+)
 from .heartbeat import create_heartbeat, evaluate_connection
 from . import identity as identity_module
+from .witness_ledger import IdentityWitness
 from . import observation_exchange
 from .participants import find as find_participant
 from .participants import inspect_all, next_verification_step
-from .protocol import ProtocolMessage
+from .protocol import PROTOCOL_VERSION, ProtocolMessage
 from .rendezvous import JoinMonitor
 from . import verified_session
 from .verified_contact import VerifiedContactOutcome, VerifiedContactResult
@@ -76,8 +107,22 @@ class LanternNode:
         allow_legacy_message_ingestion: bool = False,
         authorization_policy: AuthorizationPolicy | None = None,
         session_ttl_seconds: float = verified_session.DEFAULT_SESSION_TTL_SECONDS,
+        witness=None,
+        allowed_protocol_versions: tuple[str, ...] = (),
     ):
         self.node_id = node_id
+        # Operator-configured allowlist of peer protocol versions this
+        # node will handshake with (deployment_config). Empty tuple means
+        # the existing compatibility logic decides -- this gate only
+        # narrows, never widens.
+        self.allowed_protocol_versions = tuple(allowed_protocol_versions or ())
+        # Peers that completed an ACCEPTED /handshake in this process
+        # lifetime, with the version they declared. Consulted ONLY when
+        # an operator protocol-version allowlist is configured: without
+        # an accepted handshake, a peer cannot skip straight to
+        # /session/open and thereby bypass the version gate. Empty
+        # allowlist (the default) keeps the historical behavior.
+        self._accepted_handshakes: dict[str, str] = {}
         self.chronicle = Chronicle(chronicle_path)
         self.lantern = Lantern(chronicle_filename=chronicle_path)
         self.agent = LanternAgent(self.lantern, chronicle=self.chronicle)
@@ -133,7 +178,7 @@ class LanternNode:
             identity_dir = identity_module.default_identity_dir(
                 Path(str(chronicle_path)).parent, node_id
             )
-        self.crypto_identity = identity_module.load_or_create(node_id, identity_dir)
+        self.crypto_identity = identity_module.load_or_create(node_id, identity_dir, witness=witness)
         self.challenge_store = identity_module.ChallengeStore()
         # node_id -> public_key_hex, recorded the first time this process
         # sees a CRYPTOGRAPHICALLY_VERIFIED proof for that node_id. Used
@@ -303,16 +348,33 @@ class LanternNode:
     # Verified session (secure /message path, Phase 4 slice)
     # ==================================================
 
-    def open_session(self, node_id: str) -> dict:
-        """Issue a short-lived verified session for node_id.
+    def open_session(self, node_id: str, proof_data: dict | None = None) -> dict:
+        # Operator protocol-version allowlist: a peer that never
+        # completed an ACCEPTED /handshake (with an allowed version)
+        # cannot open a session -- this closes the skip-the-handshake
+        # bypass of the version gate. No allowlist configured -> the
+        # historical behavior is unchanged.
+        if self.allowed_protocol_versions and node_id not in self._accepted_handshakes:
+            return {
+                "created": False,
+                "reason": (
+                    "SESSION_HANDSHAKE_REQUIRED: no accepted /handshake "
+                    "on record for this node_id with an allowed protocol "
+                    "version"
+                ),
+            }
+        """Issue a short-lived verified session for node_id, requiring
+        per-request proof of private-key possession (Gate 2 Finding 9).
 
-        May only succeed if THIS process has already recorded a
-        CRYPTOGRAPHICALLY_VERIFIED public key for node_id via
-        verify_identity_proof() -- i.e. this node (as initiator A)
-        already completed a real challenge/response proof for the
-        caller. There is no other way to reach CREATED: this method
-        performs no cryptographic verification itself, it only checks
-        that verification already happened and was recorded.
+        Two-phase protocol:
+        - proof_data is None: issue a challenge and return it. The caller
+          must sign it and call again with proof_data.
+        - proof_data is provided: verify the proof against the stored
+          public key for node_id. Only if valid is a session created.
+
+        Membership in _known_public_keys is necessary but not sufficient.
+        The caller must prove they hold the private key *now*, not just
+        that the node_id was verified at some point in the past.
 
         This does NOT grant trust or authorize any capability -- see
         verified_session.py module docstring. A session proves identity
@@ -323,24 +385,57 @@ class LanternNode:
         if not isinstance(node_id, str) or not node_id:
             raise ValueError("node_id (string) is required")
 
-        # _known_public_keys is populated ONLY on a successful
-        # CRYPTOGRAPHICALLY_VERIFIED proof (see verify_identity_proof()
-        # above) -- presence here is exactly "this process has already
-        # cryptographically verified this node_id", the one precondition
-        # verified_session.create_session() requires.
-        if node_id in self._known_public_keys:
-            identity_status = identity_module.CRYPTOGRAPHICALLY_VERIFIED
-        else:
-            identity_status = identity_module.UNVERIFIED
+        # Must be a previously-verified node_id. _known_public_keys is
+        # populated ONLY on a successful CRYPTOGRAPHICALLY_VERIFIED proof
+        # (see verify_identity_proof() above).
+        if node_id not in self._known_public_keys:
+            result = self.sessions.create_session(
+                node_id=node_id, identity_status=identity_module.UNVERIFIED
+            )
+            return result.to_dict()
 
-        result = self.sessions.create_session(node_id=node_id, identity_status=identity_status)
-        response = result.to_dict()
-        if result.created:
-            response["session_id"] = result.session.session_id
-            response["expires_at_monotonic"] = result.session.expires_at_monotonic
+        expected_public_key = self._known_public_keys[node_id]
+
+        if proof_data is None:
+            # Phase 1: Issue a challenge for the caller to sign.
+            challenge = self.challenge_store.issue(
+                from_node_id=self.node_id, to_node_id=node_id
+            )
+            return {
+                "outcome": "challenge_issued",
+                "nonce": challenge.nonce,
+                "from_node_id": challenge.from_node_id,
+                "to_node_id": challenge.to_node_id,
+                "protocol_version": challenge.protocol_version,
+                "ttl_seconds": challenge.ttl_seconds,
+            }
+
+        # Phase 2: Verify the proof of private-key possession.
+        proof = identity_module.IdentityProof(**proof_data)
+        verify_result = self.challenge_store.consume(
+            proof, expected_public_key=expected_public_key
+        )
+        if not verify_result.verified:
+            return {
+                "created": False,
+                "outcome": "proof_rejected",
+                "reason": verify_result.reason,
+            }
+
+        # Proof verified -- create the session.
+        session_result = self.sessions.create_session(
+            node_id=node_id,
+            identity_status=identity_module.CRYPTOGRAPHICALLY_VERIFIED,
+        )
+        response = session_result.to_dict()
+        if session_result.created:
+            response["session_id"] = session_result.session.session_id
+            response["expires_at_monotonic"] = session_result.session.expires_at_monotonic
         return response
 
-    def _authorized_capability_decision(self, node_id: str):
+    def _authorized_capability_decision(
+        self, node_id: str, *, requested: list[str] | None = None
+    ):
         """Build a CapabilityDecision for an already-verified session's
         node_id, using THIS node's own authorization_policy. Reuses
         capability_authorization.authorize() verbatim -- never
@@ -354,6 +449,11 @@ class LanternNode:
         CRYPTOGRAPHICALLY_VERIFIED fact -- the session's existence IS
         the proof, re-derived from _known_public_keys exactly as
         open_session() does, never assumed.
+
+        requested: list of capability names to request authorization for.
+        Defaults to [EvidenceExchangeCapability] for backward
+        compatibility -- existing callers of receive_secure() are
+        unchanged.
         """
         identity_status = (
             identity_module.CRYPTOGRAPHICALLY_VERIFIED
@@ -374,11 +474,208 @@ class LanternNode:
             contact_endpoint="",
             reason="derived from bootstrap_node verified session",
         )
+        if requested is None:
+            requested = [observation_exchange.EvidenceExchangeCapability]
         return capability_authorization.authorize(
             verified,
-            requested=[observation_exchange.EvidenceExchangeCapability],
+            requested=requested,
             policy=self.authorization_policy,
         )
+
+    def query_beliefs(self, session_id: str, source_node_id: str, concepts: list[str] | None = None) -> dict:
+        """Read-only belief query: returns the current belief state of
+        THIS node's EvidenceKernel without mutating any state.
+
+        Requires a valid, non-expired session bound to source_node_id,
+        AND explicit belief_query authorization from
+        self.authorization_policy. Reuses the same session resolution
+        and capability authorization path as receive_secure() -- never
+        reimplemented here.
+
+        Returns only: concept names, belief floats (0-1), evidence
+        counts, and contradiction status. Never returns raw observation
+        content, raw evidence items, private keys, or owner_instance
+        fields. Never calls observe(), add_evidence(), resolve(),
+        persist_scar(), or chronicle.append().
+        """
+        BeliefQueryCapability = "belief_query"
+
+        # Session validation: same pattern as receive_secure()
+        lookup = self.sessions.resolve_session(
+            session_id=session_id, expected_source=source_node_id
+        )
+        if not lookup.valid:
+            return {
+                "accepted": False,
+                "reason": f"{lookup.outcome}: {lookup.reason}",
+                "data": {},
+            }
+
+        # Capability authorization: request belief_query specifically
+        decision = self._authorized_capability_decision(
+            lookup.node_id, requested=[BeliefQueryCapability]
+        )
+        if not decision.is_authorized(BeliefQueryCapability):
+            return {
+                "accepted": False,
+                "reason": f"'{BeliefQueryCapability}' is not in authorized_capabilities for '{lookup.node_id}'",
+                "denied": dict(decision.denied_capabilities),
+                "data": {},
+            }
+
+        # Read-only belief state extraction
+        kernel = self.lantern.kernel
+        evidence_concepts = {e.concept for e in kernel.evidence}
+
+        if concepts is not None:
+            query_concepts = set(concepts)
+        else:
+            query_concepts = evidence_concepts
+
+        concept_results = []
+        for concept in sorted(query_concepts):
+            belief_value = kernel.belief(concept)
+            evidence_count = sum(1 for e in kernel.evidence if e.concept == concept)
+            contradiction = kernel.latest_contradiction(concept)
+            contradiction_status = None
+            if contradiction is not None:
+                contradiction_status = {
+                    "status": contradiction.status,
+                    "severity": round(contradiction.current_severity, 4),
+                    "created_step": contradiction.created_step,
+                }
+            concept_results.append({
+                "concept": concept,
+                "belief": round(belief_value, 4),
+                "evidence_count": evidence_count,
+                "contradiction": contradiction_status,
+            })
+
+        watermark = local_watermark(self.lantern)
+
+        return {
+            "accepted": True,
+            "queried_by": source_node_id,
+            "responded_by": self.node_id,
+            "concepts": concept_results,
+            "step": kernel.step,
+            "watermark": {
+                "chain": watermark.chain,
+                "step": watermark.step,
+            },
+            "total_concepts": len(concept_results),
+        }
+
+    def record_handshake(self, node_id: str, protocol_version: str) -> None:
+        """Record an accepted /handshake for allowlist enforcement.
+        Called only from the HTTP handler after an accepted handshake,
+        and only meaningful when allowed_protocol_versions is set."""
+        self._accepted_handshakes[node_id] = protocol_version
+
+    def retrieve_observation(
+        self, session_id: str, source_node_id: str, observation_id: str
+    ) -> dict:
+        """Authenticated observation retrieval.
+
+        Requires a valid, non-expired session bound to source_node_id AND
+        explicit evidence_exchange authorization -- the exact same session
+        resolution and capability-authorization path as receive_secure(),
+        never reimplemented here. Returns the persisted observation
+        content plus its SHA-256 digest so the retriever can
+        independently verify integrity (the Chronicle hash chain
+        anchors the record; the digest anchors the content).
+
+        Read-only: never calls observe(), add_evidence(), chronicle
+        .append(), or any mutation. Fail-closed on Chronicle integrity
+        failure. Returns only observation content/provenance fields --
+        never private keys, owner_instance, or unrelated records.
+        """
+        EvidenceExchangeCapability = "evidence_exchange"
+
+        lookup = self.sessions.resolve_session(
+            session_id=session_id, expected_source=source_node_id
+        )
+        if not lookup.valid:
+            return {
+                "accepted": False,
+                "reason": f"{lookup.outcome}: {lookup.reason}",
+                "observation_id": observation_id,
+            }
+
+        decision = self._authorized_capability_decision(
+            lookup.node_id, requested=[EvidenceExchangeCapability]
+        )
+        if not decision.is_authorized(EvidenceExchangeCapability):
+            return {
+                "accepted": False,
+                "reason": (
+                    f"'{EvidenceExchangeCapability}' is not in "
+                    f"authorized_capabilities for '{lookup.node_id}'"
+                ),
+                "observation_id": observation_id,
+            }
+
+        chronicle = self.lantern.bus.chronicle
+        if not chronicle.verify():
+            return {
+                "accepted": False,
+                "reason": "CHRONICLE_INTEGRITY_FAILURE: refusing to serve records from an unverifiable chain",
+                "observation_id": observation_id,
+            }
+
+        for record in chronicle.replay():
+            if record.get("type") != "OBSERVATION_CREATED":
+                continue
+            payload = record.get("payload")
+            if not isinstance(payload, dict):
+                continue
+            if payload.get("id") != observation_id:
+                continue
+            # Adversarial hardening (cross-peer read): an
+            # evidence_exchange-authorized peer may only retrieve
+            # observations IT sent to this node. Guessing another
+            # peer's observation_id yields no data, even with a valid
+            # session and authorization.
+            if payload.get("source") != lookup.node_id:
+                return {
+                    "accepted": False,
+                    "reason": (
+                        "OBSERVATION_NOT_YOURS: observation_id exists but "
+                        "was not sent by the requesting node"
+                    ),
+                    "observation_id": observation_id,
+                }
+            content = payload.get("content")
+            if not isinstance(content, str):
+                return {
+                    "accepted": False,
+                    "reason": "UNEXPECTED_CONTENT_TYPE: stored observation content is not a string",
+                    "observation_id": observation_id,
+                }
+            stored_digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
+            watermark = local_watermark(self.lantern)
+            return {
+                "accepted": True,
+                "retrieved_by": source_node_id,
+                "responded_by": self.node_id,
+                "observation_id": observation_id,
+                "content": content,
+                "source": payload.get("source"),
+                "step": payload.get("step"),
+                "stored_digest": stored_digest,
+                "record_hash": record.get("current_hash"),
+                "record_timestamp": record.get("timestamp"),
+                "chronicle": {
+                    "chain": watermark.chain,
+                    "step": watermark.step,
+                },
+            }
+
+        return {
+            "accepted": False,
+            "reason": "OBSERVATION_NOT_FOUND: no OBSERVATION_CREATED record with that observation_id",
+            "observation_id": observation_id,
+        }
 
     def receive_secure(self, message_data: dict, session_id: str) -> dict:
         """Secure /message path: requires a valid, non-expired
@@ -520,7 +817,7 @@ class LanternNode:
         data = dict(result.data)
         observation = data.get("observation")
         if observation is not None:
-            data["observation"] = asdict(observation)
+            data["observation"] = _serializable_dict(observation)
 
         return {
             "accepted": result.accepted,
@@ -581,18 +878,7 @@ class _Handler(BaseHTTPRequestHandler):
         if self.path == "/participants":
             # Read-only inspection: claims as recorded, never re-verified
             # here and never treated as authorization. See participants.py.
-            # known_public_keys is passed through so identity_status
-            # accurately reflects any real challenge/response proof this
-            # process already completed for a node_id (see
-            # inspect_all()'s docstring) -- trust_status/authority_level
-            # remain untouched and unconditionally "unverified"/"none".
-            views = [
-                view.to_dict()
-                for view in inspect_all(
-                    self.node.rendezvous,
-                    known_public_keys=self.node._known_public_keys,
-                )
-            ]
+            views = [view.to_dict() for view in inspect_all(self.node.rendezvous)]
             self._respond(200, {"participants": views})
             return
         if self.path.startswith("/participants/") and self.path.endswith("/next-step"):
@@ -619,25 +905,38 @@ class _Handler(BaseHTTPRequestHandler):
     def _handle_get_observation(self, raw_suffix: str) -> None:
         """GET /observations/<observation_id>?session_id=<session_id>
 
-        STRICTLY SELF-ONLY. This endpoint lets a node read back an
-        Observation it already accepted into its OWN local Lantern
-        state (via receive_observation()/agent.observe()) -- it is not
-        a peer-to-peer read primitive. A remote peer's valid
-        evidence_exchange authorization/session for ITSELF grants zero
-        access here; only a caller who holds a valid, unexpired session
-        whose authenticated node_id equals THIS node's own node_id
-        (self.node.node_id) may read.
+        STRICTLY SELF-ONLY. Restored on top of the candidate protocol as
+        a DISTINCT operation from POST /observation/retrieve
+        (node.retrieve_observation), which it does not replace or
+        weaken:
 
-        Deliberately does NOT use the observation's own `source` field
-        for this decision (a hostile/malformed observation could claim
-        any source) -- the only trust anchor is the already-verified
-        session table, exactly as /message uses it.
+          - POST /observation/retrieve answers "did the peer that SENT
+            this observation get to re-read what it sent" (provenance
+            check: payload.source == caller's own authenticated
+            node_id via evidence_exchange capability). It exists only
+            for the original sender.
+          - GET /observations/<id> (this handler) answers "can the
+            node that RECEIVED and stored this observation read its
+            own local copy back over HTTP" (identity-equality check:
+            caller's authenticated session node_id == this node's own
+            node_id, self.node.node_id). It exists only for the local
+            holder reading its own state, regardless of who originally
+            sent it.
+
+        These are different questions with different trust anchors, so
+        they are kept as two distinct endpoints/names rather than
+        force-fitting one into the other's authorization semantics.
+        This handler deliberately does NOT use the observation's own
+        `source` field for its decision (a hostile/malformed
+        observation could claim any source) -- the only trust anchor
+        is the already-verified session table, exactly as /message and
+        POST /observation/retrieve both use it.
 
         Reuses existing primitives verbatim: verified_session's
-        resolve_session() for auth (same call /message makes) and
-        core.EvidenceKernel.get_observation() for the read (already
-        existed in-process, never previously exposed over HTTP). No new
-        message type, no protocol change, no new capability name.
+        resolve_session() for auth and core.EvidenceKernel
+        .get_observation() for the read. No new message type, no
+        protocol change, no new capability name (this is an identity
+        check, not a capability-authorization check).
         """
         parsed = urllib.parse.urlsplit(raw_suffix)
         observation_id = urllib.parse.unquote(parsed.path)
@@ -696,38 +995,53 @@ class _Handler(BaseHTTPRequestHandler):
         try:
             body = self._read_json()
             if self.path == "/handshake":
-                # Validate field types before constructing HandshakeRequest.
-                # Dataclasses do not enforce their type hints at runtime, so
-                # HandshakeRequest(**body) with a malformed body (e.g.
-                # capabilities as a string instead of a dict) previously
-                # constructed successfully and only failed later, inside
-                # evaluate_handshake()'s capabilities.items() call, as an
-                # uncaught AttributeError -- outside the (TypeError, ValueError,
-                # KeyError, ...) tuple this handler already catches below, so
-                # it propagated as an unhandled exception instead of a clean
-                # 400. Every other endpoint in this handler (/identity/challenge,
-                # /session/open, /message, /connection-state) already validates
-                # field types explicitly with isinstance() before use; this
-                # closes the one endpoint that skipped that convention.
-                node_id = body.get("node_id")
-                protocol_version = body.get("protocol_version")
-                capabilities = body.get("capabilities")
-                timestamp = body.get("timestamp")
-                if not isinstance(node_id, str) or not node_id:
-                    raise ValueError("node_id (string) is required")
-                if not isinstance(protocol_version, str) or not protocol_version:
-                    raise ValueError("protocol_version (string) is required")
-                if not isinstance(capabilities, dict):
-                    raise ValueError("capabilities (object) is required")
-                if not isinstance(timestamp, str) or not timestamp:
-                    raise ValueError("timestamp (string) is required")
-                request = HandshakeRequest(
-                    node_id=node_id,
-                    protocol_version=protocol_version,
-                    capabilities=capabilities,
-                    timestamp=timestamp,
-                )
+                # Malformed-input hardening: EVERY untrusted field must be
+                # type-validated BEFORE HandshakeRequest construction or
+                # evaluate_handshake(). An unvalidated field (e.g. a string
+                # capabilities value, or a non-string protocol_version
+                # reaching compatibility.parse_version()'s .lstrip) raised
+                # AttributeError -- which this handler's except tuple does
+                # not catch -- crashing the request thread and dropping the
+                # connection with no HTTP response instead of a clean 400.
+                for field in ("node_id", "protocol_version", "timestamp"):
+                    value = body.get(field)
+                    if not isinstance(value, str) or not value:
+                        raise ValueError(f"{field} must be a non-empty string")
+                if not isinstance(body.get("capabilities"), dict):
+                    raise ValueError("capabilities must be an object")
+                if (
+                    self.node.allowed_protocol_versions
+                    and body["protocol_version"]
+                    not in self.node.allowed_protocol_versions
+                ):
+                    # Operator-configured version allowlist (deployment
+                    # config): narrower than the built-in compatibility
+                    # logic, never wider.
+                    self._respond(
+                        200,
+                        asdict(
+                            HandshakeResponse(
+                                node_id=self.node.node_id,
+                                accepted=False,
+                                protocol_version=body["protocol_version"],
+                                shared_capabilities={},
+                                reason=(
+                                    "PROTOCOL_VERSION_NOT_ALLOWED: peer "
+                                    f"protocol_version {body['protocol_version']!r} "
+                                    "is not in this node's allowed protocol "
+                                    f"versions {sorted(self.node.allowed_protocol_versions)}"
+                                ),
+                                timestamp=datetime.now(timezone.utc).isoformat(),
+                            )
+                        ),
+                    )
+                    return
+                request = HandshakeRequest(**body)
                 response = self.node.evaluate_incoming_handshake(request)
+                if response.accepted and self.node.allowed_protocol_versions:
+                    self.node.record_handshake(
+                        body["node_id"], body["protocol_version"]
+                    )
                 self._respond(200, asdict(response))
                 return
 
@@ -755,17 +1069,15 @@ class _Handler(BaseHTTPRequestHandler):
                 return
 
             if self.path == "/session/open":
-                # Issue a short-lived verified session for node_id, ONLY
-                # if this process already holds a CRYPTOGRAPHICALLY_
-                # VERIFIED public key for it (see LanternNode.open_session
-                # docstring). This never grants trust or authorizes any
-                # capability -- it only binds a session_id to node_id for
-                # a bounded TTL, for use as the secure /message identity
-                # credential.
+                # Two-phase: issue a challenge, then verify proof of
+                # private-key possession before creating a session.
+                # (Gate 2 Finding 9: per-request proof, not just
+                # _known_public_keys membership.)
                 node_id = body.get("node_id")
                 if not isinstance(node_id, str) or not node_id:
                     raise ValueError("node_id (string) is required")
-                self._respond(200, self.node.open_session(node_id))
+                proof_data = body.get("proof")
+                self._respond(200, self.node.open_session(node_id, proof_data=proof_data))
                 return
 
             if self.path == "/join":
@@ -817,6 +1129,41 @@ class _Handler(BaseHTTPRequestHandler):
                 )
                 return
 
+            if self.path == "/belief/query":
+                session_id = body.get("session_id")
+                source_node_id = body.get("node_id")
+                concepts = body.get("concepts")
+                if not isinstance(session_id, str) or not session_id:
+                    raise ValueError("session_id (string) is required")
+                if not isinstance(source_node_id, str) or not source_node_id:
+                    raise ValueError("node_id (string) is required")
+                if concepts is not None and not isinstance(concepts, list):
+                    raise ValueError("concepts must be a list of strings when provided")
+                self._respond(
+                    200,
+                    self.node.query_beliefs(session_id, source_node_id, concepts),
+                )
+                return
+
+            if self.path == "/observation/retrieve":
+                session_id = body.get("session_id")
+                source_node_id = body.get("node_id")
+                observation_id = body.get("observation_id")
+                for name, value in (
+                    ("session_id", session_id),
+                    ("node_id", source_node_id),
+                    ("observation_id", observation_id),
+                ):
+                    if not isinstance(value, str) or not value:
+                        raise ValueError(f"{name} (string) is required")
+                self._respond(
+                    200,
+                    self.node.retrieve_observation(
+                        session_id, source_node_id, observation_id
+                    ),
+                )
+                return
+
             if self.path == "/connection-state":
                 peer_heartbeat = body.get("peer_heartbeat")
                 if peer_heartbeat is not None and not isinstance(peer_heartbeat, dict):
@@ -850,6 +1197,8 @@ def create_server(
     allow_legacy_message_ingestion: bool = False,
     authorization_policy: AuthorizationPolicy | None = None,
     session_ttl_seconds: float = verified_session.DEFAULT_SESSION_TTL_SECONDS,
+    witness=None,
+    allowed_protocol_versions: tuple[str, ...] = (),
 ):
     node = LanternNode(
         node_id=node_id,
@@ -857,10 +1206,71 @@ def create_server(
         allow_legacy_message_ingestion=allow_legacy_message_ingestion,
         authorization_policy=authorization_policy,
         session_ttl_seconds=session_ttl_seconds,
+        witness=witness,
+        allowed_protocol_versions=allowed_protocol_versions,
     )
     server = ThreadingHTTPServer((host, port), _Handler)
     server.node = node  # type: ignore[attr-defined]
     return server
+
+
+def public_key_fingerprint(public_key_hex: str) -> str:
+    """SHA-256 fingerprint of the raw Ed25519 public key bytes -- the same
+    convention as the forensic identity reports. Public material only."""
+    return hashlib.sha256(bytes.fromhex(public_key_hex)).hexdigest()
+
+
+def build_diagnostics(
+    node: LanternNode,
+    *,
+    listening: str | None = None,
+    public_base_url: str | None = None,
+    witness: IdentityWitness | None = None,
+    config_source: dict[str, str] | None = None,
+) -> dict:
+    """Startup/self-test diagnostics. Reports only public material:
+    node_id, public key + fingerprint, protocol version, capabilities,
+    listeners, chronicle/witness health, and external-exchange readiness.
+    NEVER private keys or credentials (there is no code path here that
+    reads private_key.bin)."""
+    chronicle = node.lantern.bus.chronicle
+    chronicle_ok = chronicle.verify()
+    witness_info: dict[str, Any] = {"enabled": False}
+    if witness is not None:
+        status, registered_key = witness.lookup(node.node_id)
+        witness_info = {
+            "enabled": True,
+            "identity_status": status,
+            "chain_valid": witness.verify_chain(),
+        }
+    identity_ok = True
+    if witness is not None:
+        identity_ok = witness_info["identity_status"] == "active"
+    external_ready = bool(chronicle_ok and identity_ok)
+    diagnostics: dict[str, Any] = {
+        "event": "startup",
+        "node_id": node.node_id,
+        "public_key": node.crypto_identity.public_key_hex,
+        "public_key_fingerprint": public_key_fingerprint(
+            node.crypto_identity.public_key_hex
+        ),
+        "protocol_version": PROTOCOL_VERSION,
+        "enabled_capabilities": node.identity_capabilities(),
+        "listening": listening,
+        "public_base_url": public_base_url,
+        "legacy_message_ingestion": node.allow_legacy_message_ingestion,
+        "chronicle": {
+            "path": str(node.chronicle.path),
+            "chain_valid": chronicle_ok,
+            "chain_head": chronicle.chain,
+            "step": node.lantern.kernel.step,
+        },
+        "witness_ledger": witness_info,
+        "external_exchange_ready": external_ready,
+    }
+    if config_source is not None:
+        diagnostics["config_source"] = config_source
+    return diagnostics
 
 
 def _parse_authorize_args(values: list[str] | None) -> AuthorizationPolicy | None:
@@ -890,20 +1300,67 @@ def _parse_authorize_args(values: list[str] | None) -> AuthorizationPolicy | Non
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Run a minimal Lantern HTTP node")
-    parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=8765)
-    parser.add_argument("--node-id", required=True)
-    parser.add_argument("--chronicle", default=None)
-    parser.add_argument("--data-dir", default=".lantern")
+    parser.add_argument("--host", default=None,
+                        help="Internal bind address (default 127.0.0.1; env LANTERN_BIND_HOST)")
+    parser.add_argument("--port", type=int, default=None,
+                        help="Internal bind port (default 8765; env LANTERN_BIND_PORT)")
+    parser.add_argument("--node-id", default=None,
+                        help="This node's node_id (required; env LANTERN_NODE_ID)")
+    parser.add_argument("--chronicle", default=None,
+                        help="Chronicle/evidence location (default <data-dir>/<node-id>.jsonl; env LANTERN_CHRONICLE)")
+    parser.add_argument("--data-dir", default=None,
+                        help="Data directory (default .lantern; env LANTERN_DATA_DIR)")
+    parser.add_argument(
+        "--public-url",
+        default=None,
+        help=(
+            "Operator-configured public base URL of THIS node "
+            "(scheme://host[:port], no path). Used for diagnostics only; "
+            "never hard-coded. env LANTERN_PUBLIC_URL"
+        ),
+    )
+    parser.add_argument(
+        "--witness-registry",
+        default=None,
+        help=(
+            "Optional path to the LAR-1 Identity Witness Ledger (default: "
+            "off -- identical pre-LAR-1 behavior). When set, identity "
+            "continuity is reconciled against the ledger at node "
+            "construction, BEFORE any socket binds or Chronicle writes. "
+            "The ledger holds public material only. env LANTERN_WITNESS_REGISTRY"
+        ),
+    )
+    parser.add_argument(
+        "--allowed-protocol-versions",
+        default=None,
+        metavar="V[,V...]",
+        help=(
+            "Comma-separated allowlist of peer protocol versions this node "
+            "will handshake with (default: existing compatibility logic; "
+            "this gate only narrows). env LANTERN_ALLOWED_PROTOCOL_VERSIONS"
+        ),
+    )
+    parser.add_argument(
+        "--self-test",
+        action="store_true",
+        default=False,
+        help=(
+            "Run startup diagnostics and exit WITHOUT binding a socket: "
+            "verify identity load, witness reconciliation, and Chronicle "
+            "integrity, print the diagnostics JSON, exit 0 on ready / 1 "
+            "otherwise. Never prints private keys."
+        ),
+    )
     parser.add_argument(
         "--allow-legacy-message-ingestion",
         action="store_true",
-        default=False,
+        default=None,
         help=(
             "Operator opt-in ONLY: accept unauthenticated /message "
             "OBSERVATION_SHARE requests with no verified session, exactly "
             "as the pre-migration protocol did. Default is OFF/secure. "
-            "This must never be the default and is never inferred."
+            "This must never be the default and is never inferred. "
+            "env LANTERN_ALLOW_LEGACY_MESSAGE_INGESTION (true/1/yes/on)"
         ),
     )
     parser.add_argument(
@@ -913,50 +1370,120 @@ def main(argv=None):
         metavar="NODE_ID:CAPABILITY[,CAPABILITY...]",
         help=(
             "Explicitly authorize a cryptographically verified node_id for "
-            "one or more capabilities on the secure /message path (e.g. "
+            "one or more capabilities on the secure paths (e.g. "
             "lantern-a:evidence_exchange). Repeatable. A verified session "
             "alone never grants this -- it must be stated explicitly by "
-            "the operator."
+            "the operator. env LANTERN_AUTHORIZE (';'-separated entries)"
         ),
     )
     parser.add_argument(
         "--session-ttl-seconds",
         type=float,
-        default=verified_session.DEFAULT_SESSION_TTL_SECONDS,
+        default=None,
         help=(
             "TTL, in seconds, for verified sessions issued by /session/open "
-            "on this node. Defaults to verified_session.DEFAULT_SESSION_TTL_SECONDS."
+            "on this node. Defaults to verified_session.DEFAULT_SESSION_TTL_SECONDS. "
+            "env LANTERN_SESSION_TTL_SECONDS"
         ),
     )
     args = parser.parse_args(argv)
 
-    if not args.chronicle:
-        data_dir = Path(args.data_dir)
-        data_dir.mkdir(parents=True, exist_ok=True)
-        args.chronicle = data_dir / f"{args.node_id}.jsonl"
-
-    authorization_policy = _parse_authorize_args(args.authorize)
-    server = create_server(
-        args.host,
-        args.port,
-        args.node_id,
-        args.chronicle,
-        allow_legacy_message_ingestion=args.allow_legacy_message_ingestion,
-        authorization_policy=authorization_policy,
-        session_ttl_seconds=args.session_ttl_seconds,
+    # Deployment-safe configuration resolution:
+    # explicit CLI argument > LANTERN_* environment variable > default.
+    # Nothing is hard-coded; the public URL only ever comes from the
+    # operator's own configuration.
+    cfg = resolve_config(
+        {
+            "bind_host": args.host,
+            "bind_port": args.port,
+            "node_id": args.node_id,
+            "data_dir": args.data_dir,
+            "chronicle_path": args.chronicle,
+            "witness_registry": args.witness_registry,
+            "public_base_url": args.public_url,
+            "authorize": args.authorize,
+            "session_ttl_seconds": args.session_ttl_seconds,
+            "allowed_protocol_versions": args.allowed_protocol_versions,
+            "allow_legacy_message_ingestion": (
+                True if args.allow_legacy_message_ingestion else None
+            ),
+        },
+        os.environ,
     )
-    print(json.dumps({
-        "listening": f"http://{args.host}:{args.port}",
-        "legacy_message_ingestion": server.node.allow_legacy_message_ingestion,
-        **server.node.identity(),
-    }))
+
+    authorization_policy = _parse_authorize_args(list(cfg.authorize))
+    witness = IdentityWitness(cfg.witness_registry) if cfg.witness_registry else None
+
+    if args.self_test:
+        # Full identity + evidence verification WITHOUT binding a socket.
+        # LanternNode construction performs the fail-closed identity load
+        # and (when a witness is configured) the LAR-1 reconciliation.
+        # ANY failure here is reported as self_test FAIL and exit 1 --
+        # never swallowed, never reported as ready.
+        try:
+            node = LanternNode(
+                node_id=cfg.node_id,
+                chronicle_path=cfg.chronicle_path,
+                authorization_policy=authorization_policy,
+                session_ttl_seconds=cfg.session_ttl_seconds,
+                witness=witness,
+                allowed_protocol_versions=cfg.allowed_protocol_versions,
+            )
+            diagnostics = build_diagnostics(
+                node,
+                public_base_url=cfg.public_base_url,
+                witness=witness,
+                config_source=cfg.source,
+            )
+        except Exception as exc:  # noqa: BLE001 -- fail-closed reporting
+            diagnostics = {
+                "event": "startup",
+                "node_id": cfg.node_id,
+                "self_test": "FAIL",
+                "external_exchange_ready": False,
+                "reason": f"{type(exc).__name__}: {exc}",
+                "public_base_url": cfg.public_base_url,
+            }
+            print(json.dumps(diagnostics, indent=2, sort_keys=True))
+            return 1
+        diagnostics["self_test"] = (
+            "PASS" if diagnostics["external_exchange_ready"] else "FAIL"
+        )
+        print(json.dumps(diagnostics, indent=2, sort_keys=True))
+        return 0 if diagnostics["self_test"] == "PASS" else 1
+
+    server = create_server(
+        cfg.bind_host,
+        cfg.bind_port,
+        cfg.node_id,
+        cfg.chronicle_path,
+        allow_legacy_message_ingestion=cfg.allow_legacy_message_ingestion,
+        authorization_policy=authorization_policy,
+        session_ttl_seconds=cfg.session_ttl_seconds,
+        witness=witness,
+        allowed_protocol_versions=cfg.allowed_protocol_versions,
+    )
+    listening = f"http://{cfg.bind_host}:{cfg.bind_port}"
+    banner = build_diagnostics(
+        server.node,
+        listening=listening,
+        public_base_url=cfg.public_base_url,
+        witness=witness,
+        config_source=cfg.source,
+    )
+    banner["listening"] = listening
+    banner["legacy_message_ingestion"] = (
+        server.node.allow_legacy_message_ingestion
+    )
+    print(json.dumps(banner, indent=2, sort_keys=True))
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
         server.server_close()
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

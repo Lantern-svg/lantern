@@ -133,13 +133,13 @@ class PortableInstance:
             "kernel": {
                 "owner_instance": self.kernel.owner_instance,
                 "step": self.kernel.step,
-                "observations": [obs.__dict__ for obs in self.kernel.list_observations()],
+                "observations": [{**{k: v for k, v in obs.__dict__.items() if k != "metadata"}, "metadata": dict(obs.metadata)} for obs in self.kernel.list_observations()],
                 "evidence": [ev.__dict__ for ev in self.kernel.evidence],
-                "contradictions": [c.__dict__ for c in self.kernel.contradictions],
-                "resolutions": [r.__dict__ for r in self.kernel.resolutions],
+                "contradictions": [{**{k: v for k, v in c.__dict__.items() if k != "evidence_snapshot"}, "evidence_snapshot": list(c.evidence_snapshot)} for c in self.kernel.contradictions],
+                "resolutions": [{**{k: v for k, v in r.__dict__.items() if k != "evidence_snapshot"}, "evidence_snapshot": list(r.evidence_snapshot)} for r in self.kernel.resolutions],
             },
             "provenance": {
-                "observations": [obs.metadata for obs in self.kernel.list_observations()],
+                "observations": [dict(obs.metadata) for obs in self.kernel.list_observations()],
             },
             "configuration": dict(self.configuration),
             "compatibility": {

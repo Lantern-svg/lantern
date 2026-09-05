@@ -138,44 +138,9 @@ def inspect(request: JoinRequest, identity_status: str = IDENTITY_UNVERIFIED) ->
     )
 
 
-def inspect_all(
-    monitor: JoinMonitor,
-    include_expired: bool = True,
-    known_public_keys: dict[str, str] | None = None,
-) -> list[ParticipantView]:
-    """Build read-only views of every recorded JoinRequest.
-
-    known_public_keys, if given, is read ONLY to decide the reported
-    identity_status -- it is never mutated here and this function never
-    performs verification itself. Pass a process's existing
-    LanternNode._known_public_keys (populated exclusively by a real,
-    successful challenge/response proof in verify_identity_proof()) so
-    that a node_id which has already cryptographically proven its
-    identity to THIS process is reported as
-    IDENTITY_CRYPTOGRAPHICALLY_VERIFIED here too, instead of silently
-    defaulting to IDENTITY_UNVERIFIED regardless of a real proof having
-    already succeeded. This does not touch trust_status or
-    authority_level, which remain unconditionally "unverified"/"none"
-    (see inspect()'s and this module's docstring) -- identity_status is
-    a third, independent axis and this only makes that axis accurately
-    reflect state this process already legitimately holds.
-
-    Omitting known_public_keys (the default) preserves the prior
-    behavior exactly: every view reports IDENTITY_UNVERIFIED.
-    """
+def inspect_all(monitor: JoinMonitor, include_expired: bool = True) -> list[ParticipantView]:
     requests = monitor.all_requests() if include_expired else monitor.pending()
-    keys = known_public_keys or {}
-    return [
-        inspect(
-            request,
-            identity_status=(
-                IDENTITY_CRYPTOGRAPHICALLY_VERIFIED
-                if request.node_id in keys
-                else IDENTITY_UNVERIFIED
-            ),
-        )
-        for request in requests
-    ]
+    return [inspect(request) for request in requests]
 
 
 def find(monitor: JoinMonitor, request_id: str) -> ParticipantView | None:
