@@ -69,6 +69,18 @@ DEFAULT_CAPABILITIES = {
     # by itself changes trust_status or authority_level. See
     # lantern.identity module docstring.
     "identity_proof": False,
+    # Confidential secret transfer over an authenticated session (see
+    # lantern.secret_transfer module docstring for why this is a
+    # separate capability from evidence_exchange/identity_proof: proof
+    # of possession is not confidentiality, and this capability layers
+    # an authenticated-encryption channel on top of an existing
+    # session rather than replacing or weakening it). Supported by
+    # default like evidence_exchange/belief_query -- but, exactly like
+    # every other capability, negotiation alone never grants access: a
+    # given peer session must still be explicitly authorized for
+    # 'secret_transfer' via --authorize before any secret can actually
+    # be sent or received.
+    "secret_transfer": True,
 }
 
 

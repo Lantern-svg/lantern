@@ -29,6 +29,12 @@ CANONICAL_CAPABILITIES = {
     "handshake": True,
     "codex_update": False,
     "identity_proof": False,
+    # Confidential secret transfer over an authenticated session (see
+    # lantern.secret_transfer module docstring). Supported by default,
+    # like evidence_exchange/belief_query -- actual per-peer use still
+    # requires explicit --authorize authorization, same two-layer gate
+    # as every other capability.
+    "secret_transfer": True,
 }
 
 CANONICAL_MESSAGE_REQUIREMENTS = {

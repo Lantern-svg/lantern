@@ -64,6 +64,7 @@ from .heartbeat import create_heartbeat, evaluate_connection
 from . import identity as identity_module
 from .witness_ledger import IdentityWitness
 from . import observation_exchange
+from . import secret_transfer
 from .participants import find as find_participant
 from .participants import inspect_all, next_verification_step
 from .protocol import PROTOCOL_VERSION, ProtocolMessage
@@ -167,6 +168,22 @@ class LanternNode:
         # docstring: replay protection is only meaningful when the same
         # ledger instance persists across calls for this process).
         self._observation_ledger = observation_exchange.ObservationExchangeLedger()
+
+        # Secret-transfer replay-dedup table (see lantern.secret_transfer
+        # module docstring): in-memory, per-process, non-persistent --
+        # mirrors _observation_ledger/self.sessions exactly. Never
+        # serialized, never written to the Chronicle, never holds
+        # secret plaintext (only transfer_id strings once consumed).
+        self._secret_transfer_store = secret_transfer.SecretTransferStore()
+
+        # transfer_id -> nacl.public.PrivateKey (ephemeral, per-transfer).
+        # In-memory only, per-process, never persisted or logged. Each
+        # entry is single-use: written by offer_secret_transfer(), read
+        # and popped exactly once by receive_secret_transfer() (success
+        # or failure). A transfer_id absent from this dict at
+        # receive_secret_transfer() time means this node never made a
+        # matching offer, and the request is rejected outright.
+        self._pending_secret_transfers: dict = {}
 
         # Cryptographic node identity: a dedicated directory, never the
         # Chronicle path or a subdirectory of it. This is a structural
@@ -745,6 +762,200 @@ class LanternNode:
             "watermark": local_watermark(self.lantern).to_dict(),
         }
 
+    def offer_secret_transfer(self, session_id: str, source_node_id: str, transfer_id: str) -> dict:
+        """Phase 1 of a secret-transfer exchange: THIS node's half of the
+        ephemeral X25519 key-agreement handshake.
+
+        Requires a valid, non-expired VerifiedSession bound to
+        source_node_id, AND explicit 'secret_transfer' authorization
+        from self.authorization_policy -- an authenticated session
+        alone is never sufficient, exactly like query_beliefs()/
+        receive_secure(). Generates a FRESH ephemeral keypair for this
+        transfer_id (never reused across transfer_ids), signs the
+        public half with this node's existing long-term identity via
+        secret_transfer.create_ephemeral_bundle(), and returns only the
+        public bundle -- the ephemeral private key is held in-memory in
+        self._pending_secret_transfers, never returned or logged.
+        """
+        lookup = self.sessions.resolve_session(
+            session_id=session_id, expected_source=source_node_id
+        )
+        if not lookup.valid:
+            return {
+                "accepted": False,
+                "reason": f"{lookup.outcome}: {lookup.reason}",
+            }
+
+        decision = self._authorized_capability_decision(
+            lookup.node_id, requested=[secret_transfer.SECRET_TRANSFER_CAPABILITY]
+        )
+        if not decision.is_authorized(secret_transfer.SECRET_TRANSFER_CAPABILITY):
+            return {
+                "accepted": False,
+                "reason": (
+                    f"'{secret_transfer.SECRET_TRANSFER_CAPABILITY}' is not in "
+                    f"authorized_capabilities for '{lookup.node_id}'"
+                ),
+                "denied": dict(decision.denied_capabilities),
+            }
+
+        if not isinstance(transfer_id, str) or not transfer_id:
+            return {"accepted": False, "reason": "transfer_id (string) is required"}
+
+        ephemeral_private, bundle = secret_transfer.create_ephemeral_bundle(
+            transfer_id=transfer_id,
+            session_id=session_id,
+            from_node_id=self.node_id,
+            to_node_id=lookup.node_id,
+            identity=self.crypto_identity,
+        )
+        # Held only in-memory for this process, keyed by transfer_id;
+        # never persisted, never logged, discarded after first use (see
+        # receive_secret_transfer() and its cleanup below).
+        self._pending_secret_transfers[transfer_id] = ephemeral_private
+
+        return {"accepted": True, "bundle": bundle.to_dict()}
+
+    def receive_secret_transfer(
+        self,
+        session_id: str,
+        source_node_id: str,
+        transfer_id: str,
+        peer_bundle: dict,
+        sealed: dict,
+    ) -> dict:
+        """Phase 2: accept the peer's ephemeral bundle + sealed secret,
+        verify everything, decrypt, and return ONLY a digest-only
+        receipt -- never the plaintext secret itself in the HTTP
+        response, never logged.
+
+        Requires: (a) a valid session bound to source_node_id with
+        'secret_transfer' authorized (same gate as offer_secret_transfer
+        above); (b) a matching in-flight ephemeral private key from a
+        prior offer_secret_transfer() call for this exact transfer_id
+        (this node must have been the one to initiate phase 1 -- a
+        transfer_id this process never offered is rejected outright);
+        (c) the peer's bundle's binding signature verifies against
+        source_node_id's ALREADY-VERIFIED long-term public key from
+        self._known_public_keys (never trusts an unauthenticated
+        ephemeral key); (d) the sealed envelope's own session_id/
+        transfer_id match what was claimed, checked inside
+        secret_transfer.open_secret() itself; (e) transfer_id has not
+        already been consumed (anti-replay, independent of ciphertext
+        validity).
+        """
+        lookup = self.sessions.resolve_session(
+            session_id=session_id, expected_source=source_node_id
+        )
+        if not lookup.valid:
+            return {
+                "accepted": False,
+                "reason": f"{lookup.outcome}: {lookup.reason}",
+            }
+
+        decision = self._authorized_capability_decision(
+            lookup.node_id, requested=[secret_transfer.SECRET_TRANSFER_CAPABILITY]
+        )
+        if not decision.is_authorized(secret_transfer.SECRET_TRANSFER_CAPABILITY):
+            return {
+                "accepted": False,
+                "reason": (
+                    f"'{secret_transfer.SECRET_TRANSFER_CAPABILITY}' is not in "
+                    f"authorized_capabilities for '{lookup.node_id}'"
+                ),
+                "denied": dict(decision.denied_capabilities),
+            }
+
+        if not isinstance(transfer_id, str) or not transfer_id:
+            return {"accepted": False, "reason": "transfer_id (string) is required"}
+
+        if self._secret_transfer_store.is_consumed(transfer_id):
+            return {
+                "accepted": False,
+                "reason": "SECRET_TRANSFER_REPLAYED: transfer_id has already been consumed once; rejecting replay",
+            }
+
+        ephemeral_private = self._pending_secret_transfers.get(transfer_id)
+        if ephemeral_private is None:
+            return {
+                "accepted": False,
+                "reason": (
+                    "SECRET_TRANSFER_UNKNOWN_TRANSFER: no matching "
+                    "offer_secret_transfer() was made for this transfer_id "
+                    "by this node"
+                ),
+            }
+
+        try:
+            peer_ephemeral_bundle = secret_transfer.EphemeralKeyBundle(
+                transfer_id=peer_bundle.get("transfer_id"),
+                session_id=peer_bundle.get("session_id"),
+                from_node_id=peer_bundle.get("from_node_id"),
+                to_node_id=peer_bundle.get("to_node_id"),
+                ephemeral_public_key_hex=peer_bundle.get("ephemeral_public_key"),
+                binding_signature_hex=peer_bundle.get("binding_signature"),
+            )
+        except (TypeError, ValueError) as exc:
+            return {"accepted": False, "reason": f"Malformed peer bundle: {exc}"}
+
+        if peer_ephemeral_bundle.transfer_id != transfer_id or peer_ephemeral_bundle.session_id != session_id:
+            return {
+                "accepted": False,
+                "reason": "Peer bundle transfer_id/session_id do not match the claimed context",
+            }
+        if peer_ephemeral_bundle.from_node_id != lookup.node_id:
+            return {
+                "accepted": False,
+                "reason": "Peer bundle from_node_id does not match the authenticated session's node_id",
+            }
+
+        expected_public_key_hex = self._known_public_keys.get(lookup.node_id)
+        if expected_public_key_hex is None:
+            return {
+                "accepted": False,
+                "reason": "No previously-verified long-term public key on file for this node_id",
+            }
+
+        try:
+            secret_transfer.verify_ephemeral_bundle(
+                peer_ephemeral_bundle, expected_public_key_hex=expected_public_key_hex
+            )
+        except secret_transfer.EphemeralKeyBindingError as exc:
+            return {"accepted": False, "reason": str(exc)}
+
+        try:
+            self._secret_transfer_store.mark_consumed_or_raise(transfer_id)
+        except secret_transfer.SecretTransferReplayError as exc:
+            return {"accepted": False, "reason": str(exc)}
+
+        try:
+            recovered_secret = secret_transfer.open_secret(
+                my_ephemeral_private=ephemeral_private,
+                their_ephemeral_public_hex=peer_ephemeral_bundle.ephemeral_public_key_hex,
+                sealed=sealed,
+                expected_session_id=session_id,
+                expected_transfer_id=transfer_id,
+            )
+        except secret_transfer.SecretTransferIntegrityError as exc:
+            return {"accepted": False, "reason": str(exc)}
+        finally:
+            # Ephemeral private key is single-use: discard immediately,
+            # success or failure, regardless of outcome.
+            self._pending_secret_transfers.pop(transfer_id, None)
+
+        receipt = secret_transfer.SecretTransferReceipt(
+            accepted=True,
+            transfer_id=transfer_id,
+            session_id=session_id,
+            secret_length=len(recovered_secret),
+            secret_sha256=hashlib.sha256(recovered_secret).hexdigest(),
+            reason="Secret received and authenticated-decrypted successfully",
+        )
+        # recovered_secret intentionally goes out of scope here and is
+        # never referenced again -- this method's return value carries
+        # only the digest-only receipt, never the plaintext.
+        return receipt.to_dict()
+
     def receive(self, message_data: dict, peer_capabilities: dict, session_id: str | None = None) -> dict:
         """POST /message entry point.
 
@@ -1169,6 +1380,48 @@ class _Handler(BaseHTTPRequestHandler):
                 if peer_heartbeat is not None and not isinstance(peer_heartbeat, dict):
                     raise ValueError("peer_heartbeat must be an object or omitted")
                 self._respond(200, self.node.connection_state(peer_heartbeat))
+                return
+
+            if self.path == "/secret/offer":
+                session_id = body.get("session_id")
+                source_node_id = body.get("node_id")
+                transfer_id = body.get("transfer_id")
+                for name, value in (
+                    ("session_id", session_id),
+                    ("node_id", source_node_id),
+                    ("transfer_id", transfer_id),
+                ):
+                    if not isinstance(value, str) or not value:
+                        raise ValueError(f"{name} (string) is required")
+                self._respond(
+                    200,
+                    self.node.offer_secret_transfer(session_id, source_node_id, transfer_id),
+                )
+                return
+
+            if self.path == "/secret/send":
+                session_id = body.get("session_id")
+                source_node_id = body.get("node_id")
+                transfer_id = body.get("transfer_id")
+                peer_bundle = body.get("bundle")
+                sealed = body.get("sealed")
+                for name, value in (
+                    ("session_id", session_id),
+                    ("node_id", source_node_id),
+                    ("transfer_id", transfer_id),
+                ):
+                    if not isinstance(value, str) or not value:
+                        raise ValueError(f"{name} (string) is required")
+                if not isinstance(peer_bundle, dict):
+                    raise ValueError("bundle (object) is required")
+                if not isinstance(sealed, dict):
+                    raise ValueError("sealed (object) is required")
+                self._respond(
+                    200,
+                    self.node.receive_secret_transfer(
+                        session_id, source_node_id, transfer_id, peer_bundle, sealed
+                    ),
+                )
                 return
 
             self._respond(404, {"error": "Not found"})
