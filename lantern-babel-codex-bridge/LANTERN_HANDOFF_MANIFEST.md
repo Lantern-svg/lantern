@@ -23,9 +23,10 @@ All values in this manifest were directly observed on this machine at creation t
 - Secrets scan: the repository contains NO private keys, passwords, tokens, cookies, or credentials. Identity private keys live outside the repository in runtime data directories and are intentionally NOT included. Synthetic test values and public key fingerprints are not secrets.
 
 ## Tests
-- Command: cd lantern-babel-codex-bridge && python3 -m pytest tests/ -q
-- Result observed at HEAD (code identical to 851751f; only documentation differs): see TEST RESULT line in the final report recorded at creation time
-- Reproduction: any system can clone from the bundle and run the same command; expected all-pass with 5 environmental skips (x402 payment tests require a library not vendored; they are an optional external service layer)
+- Command: cd lantern-babel-codex-bridge && python3 -m pytest tests/ -q --ignore=tests/test_service_integration.py
+- The optional payment integration test file (tests/test_service_integration.py) is EXCLUDED here: it imports the third-party x402 library which is not installed in this environment. The core node imports none of it (verified). Including that file without the library produces a collection ImportError, not a test failure.
+- Result observed at this HEAD (code identical to 851751f; only documentation differs since): recorded in the final report at creation time
+- Reproduction: any system can clone from the bundle and run the same command; expected all-pass with 5 known environmental skips
 
 ## Node/protocol information (safe to disclose)
 - Protocol version 0.82; capabilities: handshake, identity_proof, evidence_exchange, secret_transfer, belief_query, snapshot_exchange, contradiction_tracking; codex_update is STRUCTURALLY_UNAUTHORIZABLE
