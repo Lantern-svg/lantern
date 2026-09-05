@@ -65,6 +65,8 @@ from . import identity as identity_module
 from .witness_ledger import IdentityWitness
 from . import observation_exchange
 from . import secret_transfer
+from . import authorization_ledger as authorization_ledger_module
+from .authorization_ledger import AuthorizationLedger
 from .participants import find as find_participant
 from .participants import inspect_all, next_verification_step
 from .protocol import PROTOCOL_VERSION, ProtocolMessage
@@ -110,6 +112,7 @@ class LanternNode:
         session_ttl_seconds: float = verified_session.DEFAULT_SESSION_TTL_SECONDS,
         witness=None,
         allowed_protocol_versions: tuple[str, ...] = (),
+        authorization_ledger: AuthorizationLedger | None = None,
     ):
         self.node_id = node_id
         # Operator-configured allowlist of peer protocol versions this
@@ -155,6 +158,16 @@ class LanternNode:
         self.authorization_policy = (
             authorization_policy if authorization_policy is not None else EMPTY_POLICY
         )
+        # Authorization ledger: the auditable origin of this node's
+        # authority -- operator ceremony events plus delegated runtime
+        # admissions. Defaults to a ledger beside the Chronicle. A
+        # tampered chain contributes NOTHING (fail-closed).
+        if authorization_ledger is None:
+            authorization_ledger = AuthorizationLedger(
+                Path(chronicle_path).parent / "authorization_ledger.jsonl",
+                owner_node_id=node_id,
+            )
+        self.authorization_ledger = authorization_ledger
 
         # sessions: in-memory, per-process, non-persistent verified
         # session table -- mirrors _known_public_keys below exactly (see
@@ -624,6 +637,64 @@ class LanternNode:
             requested=requested,
             policy=self.authorization_policy,
         )
+
+    def request_authorization(self, session_id: str, node_id: str, capabilities: list[str]) -> dict:
+        """Peer admission ceremony over an EXISTING two-phase PoP
+        session.
+
+        The peer proves who it is (verified identity, established
+        session), then REQUESTS admission. This node grants it ONLY
+        within the admission scope the operator delegated via
+        --grant-admission -- never beyond it, never for structurally
+        unauthorizable capabilities, and never to itself. Every grant
+        becomes an ADMISSION event in the authorization ledger with
+        full provenance. A joining node can never declare itself
+        authorized; the only runtime path to a grant is through this
+        authority-gated ceremony.
+        """
+        # Absolute prohibition, checked BEFORE any session or identity
+        # lookups: self-admission is refused regardless of (and without
+        # revealing) session state.
+        if node_id == self.node_id:
+            return {"status": "denied", "reason": "SELF_ADMISSION_PROHIBITED"}
+        lookup = self.sessions.resolve_session(session_id=session_id, expected_source=node_id)
+        if not lookup.valid:
+            return {"status": "denied", "reason": f"{lookup.outcome}: {lookup.reason}"}
+        if node_id not in self._known_public_keys:
+            return {"status": "denied", "reason": "IDENTITY_NOT_VERIFIED"}
+        caps = frozenset(c for c in capabilities if isinstance(c, str) and c)
+        if not caps:
+            return {"status": "denied", "reason": "NO_CAPABILITIES_REQUESTED"}
+        if caps & capability_authorization.NEVER_AUTHORIZABLE:
+            return {"status": "denied", "reason": "STRUCTURALLY_UNAUTHORIZABLE"}
+        authority_scope = self.authorization_ledger.admission_authority()
+        if not caps <= authority_scope:
+            return {
+                "status": "denied",
+                "reason": "ADMISSION_SCOPE_EXCEEDED",
+                "delegated_scope": sorted(authority_scope),
+            }
+        existing = set(self.authorization_policy.grants.get(node_id, frozenset()))
+        if caps <= existing:
+            return {"status": "already_authorized", "capabilities": sorted(caps)}
+        try:
+            event = self.authorization_ledger.admit_peer(
+                subject_node=node_id,
+                subject_fingerprint=public_key_fingerprint(
+                    self._known_public_keys[node_id]
+                ),
+                scope=caps,
+                evidence=f"admission request over session {session_id}",
+            )
+        except authorization_ledger_module.AuthorizationLedgerError as exc:
+            return {"status": "denied", "reason": f"LEDGER_REJECTED: {exc}"}
+        self.authorization_policy = self.authorization_policy.merged_with(node_id, caps)
+        return {
+            "status": "admitted",
+            "capabilities": sorted(caps),
+            "event_digest": event["digest"],
+            "authority": f"delegated:{self.node_id}",
+        }
 
     def query_beliefs(self, session_id: str, source_node_id: str, concepts: list[str] | None = None) -> dict:
         """Read-only belief query: returns the current belief state of
@@ -1348,6 +1419,23 @@ class _Handler(BaseHTTPRequestHandler):
                 )
                 return
 
+            if self.path == "/authorization/request":
+                session_id = body.get("session_id")
+                node_id = body.get("node_id")
+                capabilities = body.get("capabilities")
+                for name, value in (("session_id", session_id), ("node_id", node_id)):
+                    if not isinstance(value, str) or not value:
+                        raise ValueError(f"{name} (string) is required")
+                if not isinstance(capabilities, list) or not all(
+                    isinstance(c, str) and c for c in capabilities
+                ):
+                    raise ValueError("capabilities (list of strings) is required")
+                self._respond(
+                    200,
+                    self.node.request_authorization(session_id, node_id, capabilities),
+                )
+                return
+
             if self.path == "/secret/receipt":
                 session_id = body.get("session_id")
                 node_id = body.get("node_id")
@@ -1400,6 +1488,7 @@ def create_server(
     session_ttl_seconds: float = verified_session.DEFAULT_SESSION_TTL_SECONDS,
     witness=None,
     allowed_protocol_versions: tuple[str, ...] = (),
+    authorization_ledger: AuthorizationLedger | None = None,
 ):
     node = LanternNode(
         node_id=node_id,
@@ -1409,6 +1498,7 @@ def create_server(
         session_ttl_seconds=session_ttl_seconds,
         witness=witness,
         allowed_protocol_versions=allowed_protocol_versions,
+        authorization_ledger=authorization_ledger,
     )
     server = ThreadingHTTPServer((host, port), _Handler)
     server.node = node  # type: ignore[attr-defined]
@@ -1467,6 +1557,14 @@ def build_diagnostics(
             "step": node.lantern.kernel.step,
         },
         "witness_ledger": witness_info,
+        "authorization_ledger": {
+            "path": str(node.authorization_ledger.path),
+            "chain_valid": node.authorization_ledger.chain_valid,
+            "events": len(node.authorization_ledger.events()),
+            "delegated_admission_scope": sorted(
+                node.authorization_ledger.admission_authority()
+            ),
+        },
         "external_exchange_ready": external_ready,
     }
     if config_source is not None:
@@ -1484,7 +1582,18 @@ def _parse_authorize_args(values: list[str] | None) -> AuthorizationPolicy | Non
     if not values:
         return None
     policy = EMPTY_POLICY
-    for raw in values:
+    for node_id, capabilities in _parse_authorize_entries(values):
+        policy = policy.merged_with(node_id, capabilities)
+    return policy
+
+
+def _parse_authorize_entries(values: list[str] | None) -> list[tuple[str, list[str]]]:
+    """Parse repeated --authorize node_id:capability[,capability...]
+    arguments into raw (node_id, [capabilities]) entries. Raw entries --
+    not a policy -- so the operator ceremony can record in the
+    authorization ledger EXACTLY what the operator said."""
+    entries: list[tuple[str, list[str]]] = []
+    for raw in values or []:
         if ":" not in raw:
             raise ValueError(
                 f"--authorize value {raw!r} must be node_id:capability[,capability...]"
@@ -1495,8 +1604,8 @@ def _parse_authorize_args(values: list[str] | None) -> AuthorizationPolicy | Non
             raise ValueError(
                 f"--authorize value {raw!r} must be node_id:capability[,capability...]"
             )
-        policy = policy.merged_with(node_id, capabilities)
-    return policy
+        entries.append((node_id, capabilities))
+    return entries
 
 
 def main(argv=None):
@@ -1578,6 +1687,26 @@ def main(argv=None):
         ),
     )
     parser.add_argument(
+        "--grant-admission",
+        default=None,
+        metavar="CAPABILITY[,CAPABILITY...]",
+        help=(
+            "Operator delegates bounded runtime admission authority: "
+            "this node may admit VERIFIED peers into exactly these "
+            "capabilities (recorded as a delegable BOOTSTRAP event)."
+        ),
+    )
+    parser.add_argument(
+        "--authorization-recovery",
+        default=None,
+        metavar="NOTE",
+        help=(
+            "Marks this start's ceremony events as RECOVERY with the "
+            "given evidence note (the LAR-1-style authorization "
+            "recovery ceremony)."
+        ),
+    )
+    parser.add_argument(
         "--session-ttl-seconds",
         type=float,
         default=None,
@@ -1615,6 +1744,39 @@ def main(argv=None):
     authorization_policy = _parse_authorize_args(list(cfg.authorize))
     witness = IdentityWitness(cfg.witness_registry) if cfg.witness_registry else None
 
+    # Operator ROOT CEREMONY: convert this start's explicit operator
+    # grants into auditable, idempotent ledger events (BOOTSTRAP, or
+    # RECOVERY when an explicit recovery note is given), and re-apply
+    # prior delegated admissions the ledger already holds. Fail-closed:
+    # a tampered ledger contributes NOTHING and startup reports it.
+    ledger = AuthorizationLedger(
+        Path(cfg.chronicle_path).parent / "authorization_ledger.jsonl",
+        owner_node_id=cfg.node_id,
+    )
+    try:
+        ledger.record_operator_ceremony(
+            authorize_entries=_parse_authorize_entries(list(cfg.authorize)),
+            admission_scope=(
+                [c.strip() for c in args.grant_admission.split(",") if c.strip()]
+                if args.grant_admission else []
+            ),
+            recovery_note=args.authorization_recovery,
+        )
+    except authorization_ledger_module.AuthorizationLedgerError as exc:
+        print(json.dumps({
+            "event": "startup",
+            "node_id": cfg.node_id,
+            "authorization_ledger": "INVALID",
+            "reason": f"{type(exc).__name__}: {exc}",
+            "external_exchange_ready": False,
+        }, indent=2, sort_keys=True))
+        return 1
+    if ledger.chain_valid:
+        base = authorization_policy if authorization_policy is not None else EMPTY_POLICY
+        for admitted_node, admitted_caps in ledger.admissions_policy().grants.items():
+            base = base.merged_with(admitted_node, admitted_caps)
+        authorization_policy = base
+
     if args.self_test:
         # Full identity + evidence verification WITHOUT binding a socket.
         # LanternNode construction performs the fail-closed identity load
@@ -1629,6 +1791,7 @@ def main(argv=None):
                 session_ttl_seconds=cfg.session_ttl_seconds,
                 witness=witness,
                 allowed_protocol_versions=cfg.allowed_protocol_versions,
+                authorization_ledger=ledger,
             )
             diagnostics = build_diagnostics(
                 node,
@@ -1663,6 +1826,7 @@ def main(argv=None):
         session_ttl_seconds=cfg.session_ttl_seconds,
         witness=witness,
         allowed_protocol_versions=cfg.allowed_protocol_versions,
+        authorization_ledger=ledger,
     )
     listening = f"http://{cfg.bind_host}:{cfg.bind_port}"
     banner = build_diagnostics(
