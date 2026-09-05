@@ -114,6 +114,13 @@ def evaluate_handshake(request: HandshakeRequest, supported_capabilities=None, r
             timestamp=datetime.now(timezone.utc).isoformat(),
         )
 
+    # Defense in depth (origin/master 15c1056): the HTTP layer
+    # (bootstrap_node.py do_POST) already validates capabilities is a
+    # dict before constructing HandshakeRequest, but HandshakeRequest is
+    # a plain dataclass -- it does not enforce its own type hints at
+    # runtime, so any caller constructing one directly with a malformed
+    # capabilities value must be rejected here too, before any version
+    # check or capability evaluation.
     if not isinstance(request.capabilities, dict):
         return HandshakeResponse(
             node_id=response_node_id,

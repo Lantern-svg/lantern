@@ -7,9 +7,9 @@
         "url": "https://github.com/agent-network-protocol/AgentNetworkProtocol/discussions/93",
         "status": "posted",
         "posted_at": "2026-08-24",
-        "last_update": "2026-08-26T19:09:02Z",
-        "notes": "Initial intro posted with operator approval. Endpoint went stale (tunnel restart, quick-tunnel hostnames rotate); correction comment posted 2026-08-26 with corrected live endpoint and independent /health verification. 0 external replies as of 2026-08-29 (checked via GitHub GraphQL API).",
-        "next_action": "No further action until a response arrives or 7-day no-follow-up window logic applies. Do not re-post."
+        "last_update": "2026-09-01T15:59:03Z",
+        "notes": "Initial intro posted with operator approval. Endpoint went stale twice due to quick-tunnel hostname rotation on restart: correction comment #1 posted 2026-08-26, correction comment #2 posted 2026-09-01 (https://github.com/agent-network-protocol/AgentNetworkProtocol/discussions/93#discussioncomment-18236363) with current live endpoint https://cage-organizations-surveillance-ann.trycloudflare.com, verified live via lantern.public_monitor before posting. 0 external replies as of 2026-09-01 (checked via GitHub GraphQL API, 2 total comments, both ours).",
+        "next_action": "No further action until a response arrives or 7-day no-follow-up window logic applies. Do not re-post. Expect further rotation corrections as the quick tunnel restarts (no persistent domain available)."
       }
     },
     "github_issues": {
@@ -44,7 +44,7 @@
       "JasperHG90/memex#233": {
         "type": "issue_comment",
         "url": "https://github.com/JasperHG90/memex/issues/233#issuecomment-5464359553",
-        "status": "posted",
+        "status": "active_thread",
         "posted_at": "2026-08-29",
         "target_issue": "[RFC]: Memory Conflict Detection & Resolution \u2014 Handling Legitimate Contradictions in Knowledge",
         "repo_stats": {
@@ -56,8 +56,8 @@
           "JasperHG90 (maintainer, active research-tracking)",
           "DanceNitra (external contributor with real empirical data on superseded-value frequency)"
         ],
-        "notes": "Strongest technical match found this session. Shared Lantern's actual shipped Contradiction object model (never-delete, logged resolution-event, open|resolved states) as a working data point against the RFC's hard/soft conflict question. Explicitly disclosed what's still open/unfrozen in Lantern's own docs (severity function, detection trigger) and what's not attempted at all (bitemporal valid-time semantics). No integration pitch, no adoption claim.",
-        "next_action": "Wait for response. No follow-up before 7 days."
+        "notes": "Strongest technical match found this session. Shared Lantern's actual shipped Contradiction object model as a working data point against the RFC's hard/soft conflict question. DanceNitra replied 2026-08-30 pointing out ARCHITECTURE.md's documented Contradiction schema (belief_a/belief_b/resolution_state) did not match the actual shipped dataclass in core.py, and asked whether Evidence.sign is caller-supplied or derived. Verified the claim against live code on 2026-09-01: 100% correct, doc was stale. Fixed ARCHITECTURE.md (commit bf4b32d, pushed to master) and replied on the issue (https://github.com/JasperHG90/memex/issues/233#issuecomment-5496631289) confirming the finding, explaining real sign semantics (caller-supplied, not derived), and noting the doc fix.",
+        "next_action": "Wait for further response. No further follow-up before 7 days from 2026-09-01 reply."
       },
       "AgentTanuki/agent-guild#156": {
         "type": "issue",
@@ -96,7 +96,7 @@
   "relevant_agents": 5,
   "relevant_agents_notes": "Relevance = actual technical overlap with evidence/provenance/belief-reconciliation, not just keyword match on 'agent' + 'protocol'/'identity'. Most GitHub search hits for those keywords are hackathon projects or wallet/payment tooling with no conceptual overlap. Searching GitHub issues directly for 'belief'+'confidence'+'agent' surfaced far higher-signal, already-active technical threads than repo-name keyword search.",
   "introductions": 5,
-  "responses": 0,
+  "responses": 1,
   "capability_requests": 0,
   "payment_attempts": 0,
   "successful_payments": 0,
@@ -135,6 +135,6 @@
       "last_contact": "2026-08-29"
     }
   ],
-  "last_updated": "2026-08-29T20:05:00Z",
-  "notes": "Funnel counts reflect only actions independently verified via gh api/gh issue/gh api graphql calls across sessions on 2026-08-24, 2026-08-26, and 2026-08-29. No fabricated leads, responses, or adoption. As of 2026-08-29T20:05Z: re-verified live (author=Lantern-svg, content matches funnel notes) via gh api for ANP #94 comment, PAM #3 issue, memex #233 comment, and confirmed zero external replies on all 5 open threads (ANP #93, ANP #94, PAM #3, memex #233, agent-guild #156) plus A2A #2127 (also 0). Discord channel confirmed dead (bot in 0 guilds, expired capability auth) - excluded from platforms list until re-authorized. hleserg/atman evaluated and deliberately NOT contacted: real/active repo but 1500+ mostly self-filed, Russian-language internal refactor tickets with no open community discussion venue -- posting there would land in a private backlog, not a real technical audience."
+  "last_updated": "2026-09-01T15:59:03Z",
+  "notes": "Funnel counts reflect only actions independently verified via gh api/gh issue/gh api graphql calls across sessions on 2026-08-24, 2026-08-26, 2026-08-29, and 2026-09-01. No fabricated leads, responses, or adoption. As of 2026-09-01T15:59Z: re-verified live via gh api for all 5 threads. First genuine external technical response received (DanceNitra on memex #233, 2026-08-30) -- a real doc/code discrepancy in ARCHITECTURE.md's Contradiction schema, verified true against source and fixed same session, with a reply posted back. ANP #93 endpoint corrected a second time (quick-tunnel rotation) after re-verifying the live URL via lantern.public_monitor rather than assuming the previous correction still held. Zero replies remain on ANP #93, ANP #94, PAM #3, agent-guild #156. Discord channel still dead (bot in 0 guilds, expired capability auth) - excluded from platforms list until re-authorized. hleserg/atman evaluated and deliberately NOT contacted: real/active repo but 1500+ mostly self-filed, Russian-language internal refactor tickets with no open community discussion venue -- posting there would land in a private backlog, not a real technical audience."
 }
