@@ -58,5 +58,8 @@ Receiver chronicle: lantern-local-agent-openclaw.jsonl (runtime data dir, privat
 7. The relay transport token is intentionally NOT published (it is an access credential for the transport layer). A recovering system provisions its own relay; relay-transport/ sources are in the bundle.
 8. Reported remote-side results (two-node gate LANTERN_REAL_PEER_TEST_001, remote secret transfer): REPORTED, not verifiable here.
 
+## CONVERGENCE UPDATE 2026-09-05 (post-fetch)
+The deploy branch tip on GitHub has ADVANCED: 59335e6 -> 6322b37 -> 3ba2ca6 (their line kept moving; both earlier values remain valid ancestors). A GitHub release lantern-recovery-2026-09-05 now publishes their line as a bundle asset (744,644 bytes, sha256 c0b12c8934f444f81275bd6121a6527c257961cba0f46ca2c0328bd3fed9e5b9) — fetched, hash-verified, and cloned by me. Full reconciliation of the two lines, the provenance standoff, and the falsifiable resolution: see LANTERN_CONVERGENCE_RECORD.md in this bundle.
+
 ## REPRODUCTION PROCEDURE
 Follow REPRODUCE.md in the bundle root (clean checkout, identity creation, two-node loopback ceremony, capability boundary tests, full suite). No private credentials are required for local reproduction.
