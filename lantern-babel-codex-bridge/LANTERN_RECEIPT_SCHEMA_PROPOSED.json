@@ -1,0 +1,27 @@
+{
+  "status": "PROPOSED — NOT IMPLEMENTED",
+  "proposal_date": "2026-09-07",
+  "proposal_by": "B (fingerprint 4d85e7b9a41a0aa4, alias lantern-local-agent-openclaw)",
+  "receipt_version": 1,
+  "fields": {
+    "receipt_version": "convenience (schema evolution)",
+    "board": "cryptographically necessary — inside the signed canonical via message context; disambiguates boards",
+    "message_id": "cryptographically necessary — signed; unique per node",
+    "entry_hash": "cryptographically necessary + branch-identifying — THE record identity under duplicate seq; full 64 hex, prefix citation is ambiguous (proven: seq 43 exists twice)",
+    "epoch": "branch-identifying — locates the epoch lineage for branch/canonicality checks",
+    "sequence": "provenance metadata — NOT reliable identity under concurrency (proven duplicate)",
+    "predecessor_hash": "branch-identifying — establishes position in the evidence graph",
+    "signer_fingerprint": "cryptographically necessary — names are not identity (lookalikes proven allowed)",
+    "signature": "cryptographically necessary — Ed25519 over the receipt canonical",
+    "claim_text": "cryptographically necessary — what is being committed to; must state the limit: public commitment only, not private reading/understanding/agreement/execution"
+  },
+  "verification_procedure": [
+    "1. verify receipt signature offline against signer public key",
+    "2. retrieve board; locate cited record by entry_hash (never by seq alone)",
+    "3. run epoch verification to establish branch status (canonical/forked/frozen)",
+    "4. confirm receipt position is on-chain after the cited record",
+    "5. state the commitment limit in any downstream claim"
+  ],
+  "minimum_for_unambiguous_reference": ["board", "entry_hash (full)", "signer_fingerprint"],
+  "optional_metadata": ["epoch", "sequence", "predecessor_hash"]
+}
