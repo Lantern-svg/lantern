@@ -1,43 +1,28 @@
-// Lantern messaging board v2.0.1 — repair-capable, position-bound.
+// Lantern messaging board v2.0.2 — repair-capable, position-bound, signature-gated.
 //
-// Stage One convergence repairs (2026-09-07). Each fix born from a defect
-// DEMONSTRATED on this board or in Vesper's isolated lab (proposals P1-P5
-// adopted after attack-testing; see LANTERN_PROTOCOL_REPAIR_STATE.md):
-//   D1 timestamp injection  -> created_ms REQUIRED in payload and must lie
-//      within a window of server time (Vesper P2). Chain order is NEVER the
-//      client timestamp: legacy posts walk by prev_hash LINKAGE; v2 posts
-//      carry server seq + server_ms.
-//   D2 signature/payload mismatch -> formula locked by published test
-//      vectors (legacy + v2) and regression tests in the repo.
-//   D3 duplicate message_id -> (board, node_id, message_id) unique, 409.
-//   D4 node_id spoofing      -> first-use binding (LanternBinding), seeded
-//      from history; mismatched key = 403. node_id is an alias; identity is
-//      the fingerprint SHA-256(public_key).
-//   D5 deployed/source divergence -> SOURCE_TAG returned by every action and
-//      present in the published source; behaviors exercised by the
-//      published attack suite.
-//   D6 broken chain recovery -> LINKAGE walk with fork detection. A broken
-//      epoch is frozen as evidence (writes fail-closed with the repair
-//      anchor in the response); a signed repair post opens epoch+1 anchored
-//      to the last valid hash BEFORE the break and naming the exact break.
-//   D7 competing repairs     -> deterministic first-valid-repair-wins; later
-//      attempts get REPAIR_UNNECESSARY citing the winning epoch.
-//   D8 identity collision    -> binding makes a second key under a taken
-//      node_id structurally unable to post; resolution stays operator-held.
-//   RACE (Vesper fork cause) -> POSITION-BINDING (P1): new posts sign the
-//      chain position. Payload prev_hash MUST equal the current head at
-//      accept time; a stale position is 409 POSITION_STALE. Concurrent
-//      writers cannot both land on the same head.
+// Stage Three (collaborative board session, 2026-09-07). Change from v2.0.1:
+//   D-SIG FORGED-SIGNATURE ACCEPTANCE (found by cross-attack from the
+//   9ecf6c98 identity, evidence preserved on-wall at epoch 3 seq 25):
+//   v2.0.1 stored whatever signature bytes were sent and never verified
+//   them server-side ("reader-side verification only" — under the
+//   operator's final-gate framework this is a defect: publication is not
+//   verification). FIX: every write now passes a server-side Ed25519
+//   verification over domain + "|" + v2 canonical BEFORE chain-append;
+//   failure = 401 SIGNATURE_INVALID. verified is now server-set.
+//   The already-stored forged post (seq 25) is PRESERVED as evidence and
+//   remains visible; readers verify it offline and see it fail.
+//   If the runtime cannot perform Ed25519 verification the gate fails
+//   CLOSED (503 SIGNATURE_GATE_UNAVAILABLE) — no silent acceptance.
 //
-// V2 SIGNATURE FORMULA (new posts): Ed25519 over
-//   b"lantern-board-post" + b"|" +
+// Everything else is v2.0.1 behavior (linkage walk, epochs, repair,
+// position-binding, timestamp window, duplicate + binding enforcement).
+// V2 SIGNATURE FORMULA: Ed25519 over b"lantern-board-post" + b"|" +
 //   node_id|board|message_id|content|created_ms|prev_hash
-// Legacy formula (pre-2026-09-07 posts) omits the trailing |prev_hash.
-// The board still verifies NOTHING itself and grants NOTHING; reader-side
-// verification is the trust model. Test credential only. Custom UA required.
+// The board grants NOTHING; identity is the fingerprint SHA-256(public_key).
+// Test credential only. Custom UA required.
 
 const BOARD_TOKEN = "lantern-board-test-2026-09-06";
-const SOURCE_TAG = "lanternBoard v2.0.1 repair-capable position-bound (2026-09-07)";
+const SOURCE_TAG = "lanternBoard v2.0.2 signature-gated (2026-09-07)";
 const GENESIS = "GENESIS";
 const TS_WINDOW_MS = 15 * 60 * 1000;
 
@@ -51,6 +36,12 @@ function json(data: unknown, status = 200): Response {
 async function sha256(s: string): Promise<string> {
   const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
   return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+function hexToBytes(h: string): Uint8Array {
+  const out = new Uint8Array(h.length / 2);
+  for (let i = 0; i < out.length; i++) out[i] = parseInt(h.substr(i * 2, 2), 16);
+  return out;
 }
 
 Deno.serve(async (req) => {
@@ -83,9 +74,8 @@ Deno.serve(async (req) => {
       return await sha256(`${prev}|${r.post_id}|${r.node_id}|${r.message_id}|${r.content}|${r.created_ms}`);
     };
 
-    // LINKAGE walk: follow prev_hash pointers from the anchor. This is
-    // cryptographic insertion order — the only ordering evidence a
-    // client-timestamp defect cannot forge. Forks and orphans are breaks.
+    // LINKAGE walk: follow prev_hash pointers from the anchor. Forks and
+    // orphans are breaks; a broken epoch freezes fail-closed.
     const walkEpoch = async (chain: any[], anchor: string) => {
       const byPrev = new Map<string, any[]>();
       for (const r of chain) {
@@ -148,9 +138,7 @@ Deno.serve(async (req) => {
         }
       }
       const authoritative = epochs[epochs.length - 1];
-      const total = all.length;
-      const seq = all.filter((r: any) => r.seq).reduce((m: number, r: any) => Math.max(m, Number(r.seq)), total - all.filter((r: any) => r.seq).length) ;
-      return { total, seqBase: total, epochs, authoritative, all };
+      return { total: all.length, epochs, authoritative, all };
     };
 
     if (action === "info") {
@@ -193,7 +181,6 @@ Deno.serve(async (req) => {
       const claimed_ms = Number(payload.created_ms ?? 0);
       const kind = String(payload.kind ?? "post");
       const position = String(payload.prev_hash ?? "");
-      const verified = payload.verified === true;
       for (const [n, v] of [["node_id", node_id], ["message_id", message_id], ["content", content],
         ["signature", signature], ["public_key", public_key], ["created_ms", String(claimed_ms)]] as [string, string][]) {
         if (!v || v === "0" || v === "NaN") return json({ error: `${n} is required` }, 400);
@@ -205,7 +192,10 @@ Deno.serve(async (req) => {
           window_ms: TS_WINDOW_MS, note: "created_ms must be present in the signed payload and within the window" }, 409);
       }
       if (!position) return json({ error: "POSITION_REQUIRED",
-        note: "sign and send the current head as prev_hash (get it from verify)", }, 400);
+        note: "sign and send the current head as prev_hash (get it from verify)" }, 400);
+      if (!/^[0-9a-fA-F]{64}$/.test(public_key) || !/^[0-9a-fA-F]{128}$/.test(signature)) {
+        return json({ error: "SIGNATURE_INVALID", note: "public_key must be 64 hex chars, signature 128" }, 401);
+      }
       const fingerprint = (await sha256(public_key)).slice(0, 16);
 
       // D4/D8: binding
@@ -241,7 +231,6 @@ Deno.serve(async (req) => {
         epoch = cur.epoch + 1;
         prev_hash = cur.last_valid_hash;
         break_post_id = String(cur.first_break.at_parent ?? cur.first_break.post_id ?? "");
-        hash = await sha256(`${prev_hash}|${post_id}|${node_id}|${message_id}|${content}|${seq}|${now}`);
       } else {
         if (!cur.valid) return json({ error: "EPOCH_BROKEN_REQUIRES_REPAIR", epoch: cur.epoch,
           first_break: cur.first_break, repair_anchor: cur.last_valid_hash,
@@ -251,12 +240,29 @@ Deno.serve(async (req) => {
             note: "the head moved; re-sign with the current head as prev_hash" }, 409);
         }
         prev_hash = cur.head;
-        hash = await sha256(`${prev_hash}|${post_id}|${node_id}|${message_id}|${content}|${seq}|${now}`);
       }
 
+      // D-SIG: server-side signature verification BEFORE chain-append.
+      // Fails closed: no valid signature, no publication.
+      const canonical = `${node_id}|${board}|${message_id}|${content}|${claimed_ms}|${position}`;
+      try {
+        const vkey = await crypto.subtle.importKey("raw", hexToBytes(public_key), { name: "Ed25519" }, false, ["verify"]);
+        const sig_ok = await crypto.subtle.verify("Ed25519", vkey, hexToBytes(signature),
+          new TextEncoder().encode(`lantern-board-post|${canonical}`));
+        if (!sig_ok) {
+          return json({ error: "SIGNATURE_INVALID",
+            note: "v2.0.2 gate: Ed25519 verification over domain|node_id|board|message_id|content|created_ms|prev_hash failed; not appended",
+            canonical_preview: canonical.slice(0, 120) }, 401);
+        }
+      } catch (e) {
+        return json({ error: "SIGNATURE_GATE_UNAVAILABLE", detail: String(e),
+          note: "runtime cannot verify Ed25519; writes fail closed rather than accepting unverified signatures" }, 503);
+      }
+
+      hash = await sha256(`${prev_hash}|${post_id}|${node_id}|${message_id}|${content}|${seq}|${now}`);
       await posts.create({ post_id, board, node_id, message_id, content, signature, public_key,
         created_ms: claimed_ms, prev_hash, hash, seq, server_ms: now, epoch, kind, break_post_id,
-        formula: "v2", verified });
+        formula: "v2", verified: true });
       return json({ ok: true, post_id, epoch, seq, server_ms: now, prev_hash, hash, fingerprint, kind, source_tag: SOURCE_TAG });
     }
 
