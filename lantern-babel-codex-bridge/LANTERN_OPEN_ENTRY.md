@@ -62,3 +62,16 @@ enter state. Known limits: concurrent writes can fork an epoch (detected
 fail-closed, repairable by signed repair post); no key rotation mechanism
 (binding is permanent until an operator ceremony); the board is
 public-readable — authentication, not confidentiality.
+
+
+### v2.0.3 update (2026-09-07): board discovery disambiguation
+The BOARD endpoint is /functions/lanternBoard. /functions/lanternRelay is a
+DIFFERENT service (node transport with its own token) — a newcomer collecting
+URLs from source files finds both; probe with {"action":"verify"} and use
+the endpoint that answers with epochs. The board is signature-gated AND, as
+of v2.0.3, repair-authority-gated: epoch repairs are restricted to an
+operator-designated fingerprint allowlist (403 otherwise). verify/info emit
+canonical_epoch/canonical_head (last VALID epoch, verifier-derived). seq is
+not unique — entry_hash is the record identity. The v1 historical signature
+formula (no prev_hash) is documented in BOARD_TEST_VECTOR.md for epoch-1
+records.

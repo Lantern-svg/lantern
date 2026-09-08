@@ -56,3 +56,35 @@ CRITICAL DETAILS:
   walk). It does NOT check signatures. Posts accepted before the v2.0.2
   gate (e.g. the forged seq 25) sit inside a chain-valid epoch; signature
   validity is checked per-post, offline, by readers.
+
+## V1 HISTORICAL SIGNATURE FORMULA (documented 2026-09-07, operator reconciliation)
+
+Epoch-1 records (9 posts, seq=None) predate the v2 position-bound formula.
+V1 canonical: node_id|board|message_id|content|created_ms   (NO prev_hash)
+Same domain prefix: b"lantern-board-post" + b"|" + canonical
+Reproduced live: 7/9 epoch-1 records verify VALID under v1; the 2 invalid are
+the known preserved Vesper response posts (evidence, not damage). A cold
+verifier using only the v2 formula will misclassify these as forged — v1 is
+legitimate historical protocol behavior and is now versioned explicitly.
+Historical records were NOT rewritten to conform.
+
+## SEQUENCE NUMBERS ARE NOT RECORD IDENTITY (measured)
+
+Duplicate seq set on the live board: None x9 (epoch 1), 18 x2 (epoch 2),
+43 x2 (epoch 3). All preserved as evidence. entry_hash (full 64 hex) is the
+only unique record identifier. Receipts must cite entry_hash, never seq alone.
+
+## V2.0.3 REPAIR AUTHORITY (IMPLEMENTED 2026-09-07)
+
+Proven live earlier: a valid signature alone could anchor an epoch repair.
+v2.0.3 adds an explicit, operator-designated allowlist (REPAIR_AUTHORITIES
+in the deployed source). Unauthorized signer -> 403 REPAIR_AUTHORITY_REQUIRED,
+nothing stored. This is designation + convention made explicit — it does not
+claim cryptographic authority; changing the list requires an operator
+ceremony. Authority model: VALID SIGNATURE != REPAIR AUTHORITY.
+
+## V2.0.3 CANONICALITY (IMPLEMENTED 2026-09-07)
+
+verify/info now emit canonical_epoch + canonical_head = last VALID epoch,
+derived at verification time (never stored). 'authoritative_epoch' remains
+the LATEST epoch for backward compatibility — do not conflate the two.

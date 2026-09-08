@@ -22,7 +22,14 @@
 // Test credential only. Custom UA required.
 
 const BOARD_TOKEN = "lantern-board-test-2026-09-06";
-const SOURCE_TAG = "lanternBoard v2.0.2 signature-gated (2026-09-07)";
+const SOURCE_TAG = "lanternBoard v2.0.3 repair-authority-gated (2026-09-07)";
+
+// v2.0.3 REPAIR AUTHORITY: an explicit, operator-designated allowlist.
+// Proven 2026-09-07: a valid signature alone could anchor an epoch repair
+// (VALID SIGNATURE != REPAIR AUTHORITY). Repair is a protocol-critical
+// operation; its legitimacy is operator designation + convention, now made
+// explicit and auditable. Changing this list requires an operator ceremony.
+const REPAIR_AUTHORITIES = ["4d85e7b9a41a0aa4"];
 const GENESIS = "GENESIS";
 const TS_WINDOW_MS = 15 * 60 * 1000;
 
@@ -138,7 +145,11 @@ Deno.serve(async (req) => {
         }
       }
       const authoritative = epochs[epochs.length - 1];
-      return { total: all.length, epochs, authoritative, all };
+      // v2.0.3: canonical = last VALID epoch, derived at verification time.
+      // 'authoritative' merely means LATEST epoch (naming conflation fixed
+      // by addition, not by breaking old fields).
+      const canonical = [...epochs].reverse().find((e: any) => e.valid) ?? null;
+      return { total: all.length, epochs, authoritative, canonical, all };
     };
 
     if (action === "info") {
@@ -146,7 +157,8 @@ Deno.serve(async (req) => {
       return json({ ok: true, source_tag: SOURCE_TAG,
         total: a.total, bindings: (await allBindings()).length,
         epochs: a.epochs.map((e: any) => ({ epoch: e.epoch, posts: e.posts, valid: e.valid, head: e.head })),
-        authoritative_epoch: a.authoritative.epoch, authoritative_head: a.authoritative.head });
+        authoritative_epoch: a.authoritative.epoch, authoritative_head: a.authoritative.head,
+        canonical_epoch: a.canonical ? a.canonical.epoch : null, canonical_head: a.canonical ? a.canonical.head : null });
     }
 
     if (action === "list") {
@@ -167,7 +179,8 @@ Deno.serve(async (req) => {
     if (action === "verify") {
       const a = await analyze(String(payload.board ?? "lantern-board"));
       return json({ ok: true, source_tag: SOURCE_TAG, total: a.total, epochs: a.epochs,
-        authoritative_epoch: a.authoritative.epoch, authoritative_head: a.authoritative.head });
+        authoritative_epoch: a.authoritative.epoch, authoritative_head: a.authoritative.head,
+        canonical_epoch: a.canonical ? a.canonical.epoch : null, canonical_head: a.canonical ? a.canonical.head : null });
     }
 
     if (action === "post") {
@@ -222,6 +235,13 @@ Deno.serve(async (req) => {
       let epoch = cur.epoch, prev_hash: string, break_post_id: string | null = null, hash: string;
 
       if (kind === "repair") {
+        // v2.0.3: REPAIR AUTHORITY GATE. A valid signature proves attribution,
+        // not permission. Only operator-designated fingerprints may anchor
+        // an epoch repair. Unauthorized signers get 403 and nothing is stored.
+        if (!REPAIR_AUTHORITIES.includes(fingerprint)) {
+          return json({ error: "REPAIR_AUTHORITY_REQUIRED", provided_fingerprint: fingerprint,
+            note: "repair is protocol-critical; signer fingerprint must be operator-designated (REPAIR_AUTHORITIES)" }, 403);
+        }
         if (cur.valid) return json({ error: "REPAIR_UNNECESSARY", epoch: cur.epoch,
           note: "chain is valid; nothing to repair" }, 409);
         if (position !== cur.last_valid_hash) {
