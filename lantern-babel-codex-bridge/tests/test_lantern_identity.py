@@ -524,3 +524,20 @@ def test_reload_after_rotation_loads_new_key(tmp_path):
     reloaded = idm.load_or_create("rotating-node", identity_dir)
     assert reloaded.public_key_hex == rotated.public_key_hex
     assert reloaded.public_key_hex != original.public_key_hex
+
+# v2.0.4: rotation countersignature — both keys attest the SAME statement
+def test_rotation_record_dual_signature(tmp_path):
+    from nacl.signing import SigningKey
+    from nacl.signing import VerifyKey
+    from lantern.identity import NodeIdentity, rotate_identity
+    sk = SigningKey.generate()
+    ident = NodeIdentity(node_id="rot-dual-test", public_key_hex=sk.verify_key.encode(encoder=__import__("nacl.encoding", fromlist=["HexEncoder"]).HexEncoder).decode(),
+                         identity_dir=tmp_path, signing_key=sk)
+    new_dir = tmp_path / "rotated"
+    new_dir.mkdir()
+    new_ident, record = rotate_identity(ident, new_dir)
+    assert record.new_signature, "v2.0.4: new key must countersign"
+    statement = ("lantern.identity.rotation.v1|" + ident.node_id + "|" + ident.public_key_hex +
+                 "|" + new_ident.public_key_hex + "|" + record.rotated_at).encode()
+    VerifyKey(bytes.fromhex(ident.public_key_hex)).verify(statement, bytes.fromhex(record.signature))
+    VerifyKey(bytes.fromhex(new_ident.public_key_hex)).verify(statement, bytes.fromhex(record.new_signature))

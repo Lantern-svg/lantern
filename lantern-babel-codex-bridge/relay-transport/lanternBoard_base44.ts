@@ -22,7 +22,7 @@
 // Test credential only. Custom UA required.
 
 const BOARD_TOKEN = "lantern-board-test-2026-09-06";
-const SOURCE_TAG = "lanternBoard v2.0.3 repair-authority-gated (2026-09-07)";
+const SOURCE_TAG = "lanternBoard v2.0.4 rotation-capable (2026-09-07)";
 
 // v2.0.3 REPAIR AUTHORITY: an explicit, operator-designated allowlist.
 // Proven 2026-09-07: a valid signature alone could anchor an epoch repair
@@ -284,6 +284,81 @@ Deno.serve(async (req) => {
         created_ms: claimed_ms, prev_hash, hash, seq, server_ms: now, epoch, kind, break_post_id,
         formula: "v2", verified: true });
       return json({ ok: true, post_id, epoch, seq, server_ms: now, prev_hash, hash, fingerprint, kind, source_tag: SOURCE_TAG });
+    }
+
+    if (action === "rotate") {
+      // v2.0.4: ALIAS REBINDING on a verified RotationRecord. Identity stays
+      // with the keys; this rebinds the ALIAS only, after a dual-signed
+      // ceremony: OLD key (currently bound) signs the statement, NEW key
+      // countersigns the SAME statement. Fails closed at every step.
+      if (String(payload.token ?? "") !== BOARD_TOKEN) return json({ error: "BOARD_TOKEN_INVALID" }, 403);
+      const node_id = String(payload.node_id ?? "");
+      const old_public_key = String(payload.old_public_key ?? "");
+      const new_public_key = String(payload.new_public_key ?? "");
+      const rotated_at = String(payload.rotated_at ?? "");
+      const old_signature = String(payload.old_signature ?? "");
+      const new_signature = String(payload.new_signature ?? "");
+      if (!node_id || !old_public_key || !new_public_key || !rotated_at) {
+        return json({ error: "ROTATE_FIELDS_REQUIRED", note: "node_id, old_public_key, new_public_key, rotated_at are required" }, 400);
+      }
+      if (old_public_key === new_public_key) return json({ error: "ROTATION_SAME_KEY" }, 409);
+      if (!/^[0-9a-fA-F]{64}$/.test(old_public_key) || !/^[0-9a-fA-F]{64}$/.test(new_public_key) ||
+          !/^[0-9a-fA-F]{128}$/.test(old_signature) || !/^[0-9a-fA-F]{128}$/.test(new_signature)) {
+        return json({ error: "SIGNATURE_INVALID", note: "keys must be 64 hex, signatures 128" }, 401);
+      }
+      const now = Date.now();
+      const ts = Date.parse(rotated_at);
+      if (!Number.isFinite(ts) || Math.abs(now - ts) > TS_WINDOW_MS) {
+        return json({ error: "TIMESTAMP_OUT_OF_WINDOW", rotated_at, server_now: now,
+          window_ms: TS_WINDOW_MS, note: "rotation statements expire; replay protection" }, 409);
+      }
+      // INVARIANT 1: old key must be the CURRENTLY BOUND key for this alias
+      const bl = await allBindings();
+      const binding = bl.find((b: any) => String(b.node_id) === node_id) ?? null;
+      const old_fp = (await sha256(old_public_key)).slice(0, 16);
+      if (!binding || String(binding.public_key) !== old_public_key) {
+        return json({ error: "ROTATION_NOT_BOUND", node_id, old_fingerprint: old_fp,
+          bound_fingerprint: binding ? (await sha256(String(binding.public_key))).slice(0, 16) : null,
+          note: "the old key is not the currently bound key for this alias; rotation refused" }, 403);
+      }
+      // INVARIANTS 2+3: both signatures over the EXACT rotation statement
+      const statement = `lantern.identity.rotation.v1|${node_id}|${old_public_key}|${new_public_key}|${rotated_at}`;
+      for (const [which, key, sig] of [["old", old_public_key, old_signature], ["new", new_public_key, new_signature]]) {
+        try {
+          const vkey = await crypto.subtle.importKey("raw", hexToBytes(key), { name: "Ed25519" }, false, ["verify"]);
+          const ok = await crypto.subtle.verify("Ed25519", vkey, hexToBytes(sig),
+            new TextEncoder().encode(statement));
+          if (!ok) return json({ error: "ROTATION_SIGNATURE_INVALID", which,
+            note: `${which} key signature over the rotation statement failed` }, 401);
+        } catch (e) {
+          return json({ error: "SIGNATURE_GATE_UNAVAILABLE", detail: String(e) }, 503);
+        }
+      }
+      // INVARIANT 5: record the rotation as an authenticated, chained state transition
+      const board = String(payload.board ?? "lantern-board");
+      const a = await analyze(board);
+      const cur = a.epochs[a.epochs.length - 1];
+      if (!cur.valid) return json({ error: "EPOCH_BROKEN_REQUIRES_REPAIR",
+        note: "cannot record a rotation on a broken epoch; repair first" }, 409);
+      const new_fp = (await sha256(new_public_key)).slice(0, 16);
+      const post_id = crypto.randomUUID();
+      const content = `ROTATION RECORD: alias ${node_id} rebound from fingerprint ${old_fp} to ${new_fp} at ${rotated_at}. Dual-signature state transition verified server-side. Statement: lantern.identity.rotation.v1|${node_id}|${old_public_key}|${new_public_key}|${rotated_at}. Old signature: ${old_signature}. New signature: ${new_signature}. Formula rotation-v1: this record carries the OLD and NEW rotation signatures, not the post canonical. Scope: rebinds THIS alias only; authority designations do not transfer; other aliases of the old key unaffected.`;
+      if (content.length > 4000) return json({ error: "content too long (max 4000)" }, 400);
+      const seq = a.total + 1;
+      const hash = await sha256(`${cur.head}|${post_id}|${node_id}|${post_id}|${content}|${seq}|${now}`);
+      await posts.create({ post_id, board, node_id, message_id: post_id, content, signature: old_signature,
+        public_key: old_public_key, created_ms: now, prev_hash: cur.head, hash, seq, server_ms: now,
+        epoch: cur.epoch, kind: "rotation", break_post_id: null, formula: "rotation-v1", verified: true });
+      // INVARIANTS 6+8: rebind the alias to the new key
+      try {
+        await bindings.update(binding.id, { public_key: new_public_key, fingerprint: new_fp, created_ms: now });
+      } catch (e) {
+        return json({ error: "ROTATION_REBIND_FAILED", detail: String(e),
+          note: "rotation record stored but binding unchanged; operator attention required" }, 500);
+      }
+      return json({ ok: true, rotated: true, node_id, old_fingerprint: old_fp, new_fingerprint: new_fp,
+        rotation_post_id: post_id, epoch: cur.epoch, seq, source_tag: SOURCE_TAG,
+        note: "alias rebound; old key no longer accepted for this alias; authority designations unchanged" });
     }
 
     return json({ error: "BOARD_UNKNOWN_ACTION", action }, 404);

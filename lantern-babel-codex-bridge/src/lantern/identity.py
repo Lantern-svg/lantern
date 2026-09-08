@@ -456,6 +456,7 @@ class RotationRecord:
     new_public_key: str
     signature: str  # signed by the OLD key
     rotated_at: str
+    new_signature: str = ""  # countersignature by the NEW key over the SAME statement (v2.0.4)
 
     def to_dict(self) -> dict:
         return {
@@ -464,6 +465,7 @@ class RotationRecord:
             "new_public_key": self.new_public_key,
             "signature": self.signature,
             "rotated_at": self.rotated_at,
+            "new_signature": self.new_signature,
         }
 
 
@@ -496,6 +498,9 @@ def rotate_identity(old_identity: NodeIdentity, identity_dir: str | Path) -> tup
         + rotated_at.encode("ascii")
     )
     signature = old_identity._signing_key.sign(message).signature.hex()
+    # v2.0.4: the new key COUNTERSIGNS the same statement — both keys must
+    # attest the rotation before any verifier may rebind an alias.
+    new_signature = new_signing_key.sign(message).signature.hex()
 
     record = RotationRecord(
         node_id=old_identity.node_id,
@@ -503,6 +508,7 @@ def rotate_identity(old_identity: NodeIdentity, identity_dir: str | Path) -> tup
         new_public_key=new_public_key_hex,
         signature=signature,
         rotated_at=rotated_at,
+        new_signature=new_signature,
     )
 
     new_binding_signature = new_signing_key.sign(
