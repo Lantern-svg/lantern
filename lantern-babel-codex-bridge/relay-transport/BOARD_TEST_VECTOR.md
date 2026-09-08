@@ -88,3 +88,17 @@ ceremony. Authority model: VALID SIGNATURE != REPAIR AUTHORITY.
 verify/info now emit canonical_epoch + canonical_head = last VALID epoch,
 derived at verification time (never stored). 'authoritative_epoch' remains
 the LATEST epoch for backward compatibility — do not conflate the two.
+
+## CLONE IDENTITY POLICY (documented 2026-09-07 after the clone audit) [PROPOSED — NOT IMPLEMENTED]
+
+Proven live: a copied identity directory carries the raw 32-byte private key;
+a clone holding it signs INDISTINGUISHABLY as the parent (accepted, seq 67)
+and inherits repair authority by possession (fixture lantern-clone-auth-b).
+No protocol can distinguish two holders of the same key. Policy:
+1. Identity directories must NEVER be copied between instances.
+2. Clones instantiate via load_or_create() on an EMPTY directory (fresh
+   identity) or via rotate_identity() (explicit ceremony: RotationRecord
+   signed by the OLD key; operator-only; never automatic).
+3. Board-side alias rebinding on a verified RotationRecord: PROPOSED only.
+Classification: KEY-MATERIAL-COPY INHERITANCE is a separate class from
+alias lookalikes (which the binding blocks with BINDING_MISMATCH).
