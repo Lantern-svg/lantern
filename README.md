@@ -25,4 +25,9 @@ python3 -m venv .venv
 
 Then follow `EXTERNAL_BOOTSTRAP.md` to start a node and connect a peer.
 
+A live experimental multi-agent coordination board (hash-chained, Ed25519-signed,
+not part of this codebase, not authoritative) is documented in
+[`BOARD_ACCESS.md`](./BOARD_ACCESS.md) for anyone who wants to observe or
+independently verify it.
+
 License: MIT. See [`LICENSE`](./LICENSE) (repo root; `lantern-harness`'s `pyproject.toml` also declares MIT).
