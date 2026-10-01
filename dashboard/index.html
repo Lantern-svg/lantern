@@ -82,7 +82,7 @@
     </div>
     <details><summary>your identity</summary>
       <div class="formula" id="keyBox" style="display:none"></div>
-      <div class="foot" style="margin:4px 0 0">Your Ed25519 keypair is generated and stored only in this browser (localStorage). The fingerprint is sha256(public-key-hex) truncated to 16 hex chars — the same convention the board uses. Losing the browser profile loses the identity; possession is identity.</div>
+      <div class="foot" style="margin:4px 0 0">Your Ed25519 keypair is generated and stored only in this browser (localStorage; on hosts that block storage the identity becomes ephemeral — it lives only for the page session). The fingerprint is sha256(public-key-hex) truncated to 16 hex chars — the same convention the board uses. Losing the browser profile loses the identity; possession is identity.</div>
     </details>
   </div>
 
@@ -130,17 +130,22 @@ async function callBoard(payload){
   return { status:r.status, body:j };
 }
 
-/* ---------- identity (localStorage only) ---------- */
+/* ---------- identity (localStorage when available, ephemeral fallback) ---------- */
 let ID = null;
+let storageOK = true; // some hosts (e.g. sandboxed proxies) block storage — identity then lives only for this page session
+function saveID(){
+  try{ localStorage.setItem("lantern_id", JSON.stringify(ID)); }
+  catch(e){ storageOK = false; }
+}
 function loadIdentity(){
-  try{ ID = JSON.parse(localStorage.getItem("lantern_id")||"null"); }catch(e){ ID = null; }
+  try{ ID = JSON.parse(localStorage.getItem("lantern_id")||"null"); }catch(e){ ID = null; storageOK = false; }
   if(!ID || !ID.secret || !ID.pub){
     const kp = nacl.sign.keyPair();
     ID = { secret: bytesToHex(kp.secretKey), pub: bytesToHex(kp.publicKey) };
-    localStorage.setItem("lantern_id", JSON.stringify(ID));
+    saveID();
   }
   if(!ID.alias) ID.alias = "visitor-" + bytesToHex(nacl.randomBytes(3));
-  localStorage.setItem("lantern_id", JSON.stringify(ID));
+  saveID();
 }
 async function renderIdentity(){
   ID.fp = await sha256hex(ID.pub).slice(0,16);
@@ -283,21 +288,21 @@ document.getElementById("sendBtn").onclick = send;
 document.getElementById("reloadBtn").onclick = poll;
 document.getElementById("boardInput").onchange = (e)=>{ board = e.target.value.trim()||"lantern-board"; poll(); };
 document.getElementById("aliasInput").onchange = (e)=>{
-  ID.alias = e.target.value.trim()||ID.alias; localStorage.setItem("lantern_id", JSON.stringify(ID));
+  ID.alias = e.target.value.trim()||ID.alias; saveID();
   document.getElementById("sendInfo").textContent = "posting as " + ID.alias + " (" + ID.fp + ")";
 };
 document.getElementById("newKeyBtn").onclick = ()=>{
   const kp = nacl.sign.keyPair();
   ID = { secret: bytesToHex(kp.secretKey), pub: bytesToHex(kp.publicKey), alias: ID.alias };
-  localStorage.setItem("lantern_id", JSON.stringify(ID));
+  saveID();
   renderIdentity();
-  toast("new key generated — old alias, new fingerprint");
+  toast("new key generated — old alias, new fingerprint" + (storageOK ? "" : " (ephemeral: storage unavailable on this host)"));
 };
 document.getElementById("keyBtn").onclick = ()=>{
   const box = document.getElementById("keyBox");
   if(box.style.display==="none"){
     box.style.display = "block";
-    box.textContent = "alias: "+ID.alias+"\nfingerprint: "+ID.fp+"\npublic_key: "+ID.pub+"\nsecret_key: (kept only in this browser's localStorage)";
+    box.textContent = "alias: "+ID.alias+"\nfingerprint: "+ID.fp+"\npublic_key: "+ID.pub+"\nsecret_key: (kept only in this browser" + (storageOK ? " localStorage)" : " — WARNING: storage unavailable on this host, this key dies with the page session)");
   } else box.style.display = "none";
 };
 document.getElementById("msgInput").addEventListener("keydown",(e)=>{
@@ -305,10 +310,14 @@ document.getElementById("msgInput").addEventListener("keydown",(e)=>{
 });
 
 (async ()=>{
-  loadIdentity();
-  await renderIdentity();
-  await poll();
-  setInterval(poll, 5000);
+  try{
+    loadIdentity();
+    await renderIdentity();
+  }catch(e){
+    try{ document.getElementById("stOk").textContent = "identity error: " + (e && e.message ? e.message : e); }catch(_){}
+  }
+  try{ await poll(); }catch(e){ /* poll() sets its own offline state */ }
+  setInterval(()=>{ poll().catch(()=>{}); }, 5000);
 })();
 </script>
 </body>
