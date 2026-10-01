@@ -1,131 +1,481 @@
-# Lantern Babel Codex Bridge (LBCB)
+# Lantern
 
-An interoperability layer for shared understanding between humans and AI systems.
+An auditable evidence/belief engine and inter-instance exchange protocol for AI systems.
 
-LBCB does not decide what is true. It exposes **why** a belief is currently held, **how strongly**, and **what would change it**. Reasoning is separated from truth: the engine's job is transparency and revisability, not adjudication.
+Lantern does not decide what is true. It tracks *why* a belief is currently held, *how strongly*, and *what would change it*. Reasoning is separated from truth: the engine's job is transparency and revisability, not adjudication.
 
 > Shared understanding is built through evidence, perspective, and continuous verification — not assumption.
 
-## Status
+---
 
-Research prototype ("the Lantern organism") with working evidence accumulation, confidence scoring, contradiction handling, temporal decay, priority management, and reflective narration. Currently being extracted into a minimal, documented, public core, separate from the full prototype.
+## What Lantern Is
 
-This repository will ship the **protocol first, implementation second**: a specification precise enough that an independent implementation (Rust, Python, Go, JS) should arrive at the same reasoning behavior given the same inputs.
+Lantern is a Python library and network protocol that gives AI agents a structured, auditable belief system. Instead of storing text and retrieving it later, Lantern tracks evidence with provenance, computes beliefs from weighted evidence, detects contradictions, and preserves errors as durable learning signals.
 
-## Why
+An AI agent using Lantern doesn't just remember what it saw — it maintains a continuously updated model of what it believes, why, and how confident it is. When new evidence contradicts existing beliefs, the contradiction is detected, tracked, and resolved through an explicit process — not silently overwritten.
 
-Most multi-model / human-AI systems exchange either raw text (lossy, ambiguous) or embeddings (similarity, not meaning). LBCB proposes a middle layer: a semantic graph of concepts backed by an auditable evidence trail, so agents and humans can compare *why* they believe something, not just *what* they output.
+## The Problem
 
-Core positions:
+Most agent memory systems answer: *What did the agent see before?*
 
-- Semantic similarity is never sufficient to establish equivalence.
-- Contradictions are not deleted; they become first-class, tracked objects.
-- Cross-model agreement is correlation, not independent verification — it can nudge confidence but is never authoritative.
-- Belief state must be replayable at any point in time, using only evidence available up to that point.
+Lantern answers: *What does the agent believe, and why — and what evidence contradicts that belief?*
 
-## Architecture
+Existing agent memory frameworks (CoALA, Letta/MemGPT, Mem0) treat memory as storage and retrieval. They store conversation history, summarize it, and retrieve relevant pieces. None of them:
 
-See [ARCHITECTURE.md](./ARCHITECTURE.md) for the full module breakdown, data model, and open (not-yet-frozen) specification items.
+- Compute belief from weighted, signed evidence
+- Detect formal contradictions between beliefs
+- Track contradictions as first-class objects with lifecycle and resolution
+- Preserve errors as permanent structural signals
+- Maintain cryptographic provenance for every evidence item
 
-For the first controlled external Lantern connection, see
-[EXTERNAL_BOOTSTRAP.md](./EXTERNAL_BOOTSTRAP.md). It documents the minimal
-HTTP transport adapter, exact install/start/connect commands, and the
-secure-by-default identity/authorization model below, without changing the
-core protocol or trust model.
+The BEAM benchmark (2026) found near-zero contradiction-resolution scores across existing agent memory systems. This is the gap Lantern addresses.
 
-## Networking and Security Model
+---
 
-A Lantern node can talk to other Lantern nodes over a minimal HTTP
-transport. Three separate things gate whether that talking actually leads
-to anything, and none of them imply the others:
+## How Lantern Got Here — The Organogenesis Pipeline
 
-- **Node identity** is a real Ed25519 keypair per node, verified via a
-  challenge/response round trip. It proves *who* is on the other end of
-  the connection. It is not trust, and it grants nothing by itself. See
-  [NODE_IDENTITY.md](./NODE_IDENTITY.md).
-- **Capability authorization** is an explicit, operator-set allowlist
-  (`--authorize node_id:capability`) mapping a verified node id to specific
-  capabilities. A peer proving its identity, or negotiating a shared
-  capability during handshake, never grants authorization on its own —
-  the operator has to say so.
-- **Verified sessions** bind a short-lived token to an already-verified
-  node id so the secure `/message` path doesn't have to redo the identity
-  proof on every call. A session carries no capabilities of its own.
+Lantern wasn't designed top-down. It evolved through an **Organogenesis Pipeline**: a formal process where informal hacks become repeated patterns, patterns become named principles, and principles become load-bearing organs.
 
-By default (`legacy_message_ingestion: false`), a peer must pass identity
-verification, hold a live session, and have an explicit operator
-authorization grant before `/message` accepts anything from it. An
-operator can opt back into the old unauthenticated workflow with
-`--allow-legacy-message-ingestion` (server) / `--legacy` (client) — off by
-default, never inferred, and clearly weaker.
+```
+Need → Informal Practice → Repeated Pattern → Named Principle → Formal Organ
+```
 
-None of the above changes what a verified, authorized peer can actually do:
-it can add an observation to your Chronicle. It cannot make your Lantern
-believe anything, cannot mutate your Codex, and cannot trigger
-`CODEX_UPDATE` — that capability is structurally disabled in code, not
-just policy-gated, so no authorization grant can reach it. Receiving an
-observation is never the same as trusting it; only your own local
-evaluation moves belief.
+This is not a metaphor. It's how the codebase actually grew. Two examples:
 
-Lantern also supports being discovered and joined over Discord as an
-untrusted signaling/rendezvous channel only (never a trust anchor, never a
-direct path to belief or evidence) — see the module docstrings in
-`src/lantern/discord_bridge.py` and `src/lantern/discord_rendezvous.py`.
+### The Fixed Point → Drift Detection
 
-## Modules
+The earliest Lantern code was a `FixedPointAgent` — a simple agent anchored to an immutable `FixedPoint` (owner, purpose, rules) with a heartbeat, a memory log, and drift detection that triggered self-correction:
 
-- **Observation Engine** — captures incoming information as structured, sourced observations.
-- **Interpretation Engine** — turns observations into concepts, relationships, and confidence/uncertainty estimates. Stores meaning, not sentences.
-- **Evidence Engine** — maintains weighted, signed, sourced evidence for and against every concept. Confidence is computed, not assigned.
-- **Contradiction Engine** — detects logical conflicts between beliefs and tracks them as objects with a lifecycle, not deletions.
-- **Memory Engine** — working / episodic / semantic memory plus validated principles. Evidence decays unless reinforced.
-- **Reasoning Engine** — combines observation, memory, evidence, values, and goals into decisions with an explicit reasoning trace.
-- **The Codex** — a semantic graph of concepts (not documents), with explicit-meaning edges. Vector search is used for retrieval only; vectors are navigation, never truth.
-- **The Scar Engine** — turns a *meaningful* outcome (a real failure, contradiction, incompatibility, or significant success — never routine traffic) into a durable, Chronicle-backed record that survives restart and replay. A Scar is remembered experience, not an automatic belief change; see [ARCHITECTURE.md](./ARCHITECTURE.md) for the full gating rule and the interoperability loop it closes (DISCOVER → … → INTEGRATE → SCAR → MEMORY).
+```python
+# Proto-Lantern: FixedPointAgent (early prototype — illustrative snippet,
+# not a file in this repository)
+agent._evaluate_drift()   # Count contradictions in recent memory
+agent._recenter()         # Reset to fixed point when drift > 0.5
+```
 
-## What's in v0.84
+*Note: The proto-Lantern code snippets in this section are illustrative
+historical artifacts showing the conceptual evolution of the architecture.
+They are not files in this repository. The production Lantern system is
+the code in `src/lantern/`.*
 
-Beyond the core evidence/belief kernel and inter-instance protocol, the
-current public system now also includes:
+Through the Organogenesis Pipeline, this became:
 
-- **Orchestration** — a conservative capability/delegation layer with
-  explicit verification policy and provenance tracking.
-- **Compass** — a read-only orientation layer that answers WHAT matters,
-  WHY, WHAT is allowed, and WHAT is next from real Lantern state.
-- **Compression** — a validator that turns meaningful outcomes into durable
-  Scar records without silently upgrading semantics.
-- **Contact ledger** — an evidence-backed contact-state ladder that keeps
-  path-found / sent / received / acknowledged / identity-verified /
-  collaboration-authorized distinct.
-- **Live MCP integration** — a bounded stdio MCP client and integration
-  layer that exposes real Lantern capabilities through MCP without turning
-  discovery into authorization.
-- **Receiver readiness** — an explicit, tested inbound path from
-  `JOIN_REQUESTED` through compatibility, identity verification,
-  authorization, and verified-peer status using existing modules only.
+| Stage | What Happened |
+|---|---|
+| Need | Prevent an agent from drifting away from its purpose |
+| Informal Practice | FixedPointAgent with a simple drift counter |
+| Repeated Pattern | heartbeat → drift → recenter appeared across multiple versions |
+| Named Principle | "Drift Detection" — identity preservation over trajectories |
+| Formal Organ | Immune System #2 (v48): Drift Detection with Growth = Change + Continuity, Drift = Change - Continuity |
 
-These are layered additions on top of the same core principle: Lantern
-tracks why a belief is held, how strong it is, and what would change it,
-without collapsing observation into trust or transport success into truth.
+### The Ambassador Gate → Capability Authorization
 
-## Target users
+The same proto-code had an ambassador mode where the agent proposed actions but could not self-authorize them — a human had to approve:
 
-Developers building AI systems that need an interoperability layer above one or more models, rather than a replacement for any of them. Candidate applications: human↔AI collaboration, AI↔AI communication, multi-agent reasoning, long-term memory systems, research assistants, autonomous software agents.
+```python
+# Proto-Lantern: Ambassador Mode (early prototype — illustrative snippet,
+# not a file in this repository)
+action = agent.propose_action("Send message to external system")  # NOT authorized
+agent.approve_action(action)  # Human approves → action released
+```
+
+*Note: In this prototype, `approve_action()` was a method on the agent
+itself — there was no structural enforcement preventing self-authorization.
+The prototype demonstrated the concept of proposal → approval, but the
+production authorization mechanism is the stronger enforcement layer:
+operator-controlled capability grants, `NEVER_AUTHORIZABLE` structural
+prohibition, and verified-session source binding.*
+
+Through the Organogenesis Pipeline, this became:
+
+| Stage | What Happened |
+|---|---|
+| Need | Prevent an agent from taking external actions without authorization |
+| Informal Practice | propose_action / approve_action pattern |
+| Repeated Pattern | Human-in-the-loop approval appeared across every external action |
+| Named Principle | "Do not self-authorize external action" |
+| Formal Organ | Capability Authorization system: operator-controlled allowlist, `NEVER_AUTHORIZABLE` capabilities, verified sessions with source binding |
+
+### The Lantern Swarm → Inter-Instance Protocol
+
+The very first Lantern code was literally about lanterns — lights that turn on and off, coordinated as a swarm:
+
+```python
+# Proto-Lantern: Swarm coordination (earliest prototype — illustrative
+# snippet, not a file in this repository)
+coord = Coordinator(bus, [Lantern("A"), Lantern("B"), Lantern("C")])
+coord.sync_all_on()  # Coordinate multiple lanterns
+```
+
+*Note: This historical swarm coordinator was an early synchronization
+experiment. The coordinator did not possess actual authority over the
+lanterns — each lantern changed state independently. The MessageBus was
+not functionally enforcing coordination in the production sense. This
+prototype explored the concept of multi-agent synchronization, which
+later evolved into the inter-instance protocol with proper
+authorization boundaries.*
+
+Through the Organogenesis Pipeline, this became the inter-instance exchange protocol (v0.82) with Ed25519 identity verification, capability authorization, verified sessions, and evidence exchange.
+
+---
+
+## Core Architecture
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                     Lantern Node                          │
+│                                                          │
+│  ┌──────────────┐    ┌──────────────┐    ┌────────────┐  │
+│  │  Observation  │───▶│  Evidence    │───▶│  Belief    │  │
+│  │  Engine      │    │  Kernel      │    │  (computed)│  │
+│  │              │    │              │    │            │  │
+│  │ content      │    │ weight×sign  │    │ sigmoid(   │  │
+│  │ source       │    │ decayed over │    │  Σ evidence│  │
+│  │ reliability  │    │ time         │    │  ) = 0..1  │  │
+│  └──────────────┘    └──────┬───────┘    └────────────┘  │
+│                             │                            │
+│                    ┌────────▼───────┐                     │
+│                    │  Contradiction │                     │
+│                    │  Engine        │                     │
+│                    │                │                     │
+│                    │  + / - evidence│                     │
+│                    │  = tracked obj │                     │
+│                    │  (not deleted)  │                     │
+│                    └────────┬───────┘                     │
+│                             │                            │
+│                    ┌────────▼───────┐    ┌────────────┐  │
+│                    │  Resolution    │───▶│  Scar       │  │
+│                    │  Engine        │    │  System     │  │
+│                    │                │    │             │  │
+│                    │  decision +    │    │  permanent  │  │
+│                    │  reasoning +   │    │  Chronicle  │  │
+│                    │  confidence    │    │  record     │  │
+│                    └────────────────┘    └────────────┘  │
+│                                                          │
+│  ┌──────────────────────────────────────────────────┐    │
+│  │  Chronicle (SHA-256 hash chain, append-only)      │    │
+│  │  Every event: observation, evidence, contradiction,│    │
+│  │  resolution, scar — hashed and chained.          │    │
+│  │  Replayable. Verifiable. Crash-recoverable.       │    │
+│  └──────────────────────────────────────────────────┘    │
+│                                                          │
+│  ┌──────────────────────────────────────────────────┐    │
+│  │  Inter-Instance Protocol (v0.82)                  │    │
+│  │  Ed25519 identity · capability authorization     │    │
+│  │  verified sessions · observation exchange        │    │
+│  │  read-only belief queries                        │    │
+│  └──────────────────────────────────────────────────┘    │
+└─────────────────────────────────────────────────────────┘
+```
+
+### Evidence-Based Beliefs [VERIFIED]
+
+Every belief is computed from evidence, not assigned.
+
+```
+belief(concept) = sigmoid(Σ decayed_weight × sign)
+```
+
+- Each evidence item has a `weight` (scaled by source reliability) and a `sign` (+1 supporting, -1 contradicting)
+- Evidence decays over time: `decayed_weight = weight × max(0, 1 - 0.05 × age)`
+- Belief is a value between 0 and 1 — a principled confidence score
+- Belief can be replayed at any point in time using only evidence available up to that step
+
+This means beliefs naturally weaken without reinforcement, respond to new evidence, and are never just "stored" — they're always computed from the evidence record.
+
+### Contradiction Detection [VERIFIED]
+
+When evidence with opposite signs exists for the same concept, a `Contradiction` object is created — not a deletion or silent overwrite.
+
+```
+Contradiction {
+  concept, evidence_snapshot, severity,
+  status: OPEN → RESOLVED,
+  resolution_id, supersedes, superseded_by
+}
+```
+
+- Severity = `min(Σ positive_weights, Σ negative_weights)` — the weight of the weaker side
+- Contradictions form a chain: new contradictions supersede old ones, preserving history
+- Resolution requires a `ResolutionEvent` with: decision, reasoning, confidence, and an evidence snapshot
+- Contradictions are never deleted
+
+### Provenance / Chronicle [VERIFIED]
+
+The Chronicle is an append-only, SHA-256 hash-chained event log. Every state-changing event — observation, evidence, contradiction, resolution, scar — is recorded.
+
+- Each record contains: timestamp, previous_hash, current_hash, event body
+- Atomic writes with `fsync` + post-write verification (no partial corruption)
+- Chain verification: replay the log and recompute every hash
+- Snapshot/restore: full state can be saved and recovered after crash
+- `records_after(chain_hash)`: incremental sync between nodes
+
+Every evidence item carries provenance: `concept`, `observation_id`, `weight`, `sign`, `step`, `owner_instance`. You can trace any belief back to the specific observations that produced it.
+
+### Scar Preservation [VERIFIED]
+
+Errors and significant outcomes are preserved as `Scar` objects — permanent Chronicle-backed records that survive restart and replay.
+
+```
+Scar {
+  id, timestamp, source, trigger,
+  observation, outcome, severity,
+  lesson, related_contradiction_id,
+  related_evidence_ids, provenance
+}
+```
+
+- Scars are frozen (immutable) dataclasses
+- A Scar is only persisted after the Chronicle append succeeds and can be verified on replay
+- Scars are remembered experience, not automatic belief changes — they record what happened so future reasoning can learn from it
+- No scar is ever deleted
+
+### Governance / Immune Systems [VERIFIED in protocol; PARTIAL in code]
+
+Lantern's protocol history defines 8 immune systems — governance structures that constrain evolution at different scales. These were formalized through the Organogenesis Pipeline across 76 protocol versions (v44–v56):
+
+| Immune System | Scope | Protocol Origin | Code Status |
+|---|---|---|---|
+| Invariant Gate | per-change code integrity | v50 | Specification |
+| Drift Detection | per-trajectory identity | v48 | Specification |
+| Fulfillment Engine | per-purpose meaning | v50 | Specification |
+| Wisdom Safety Gate | per-principle validation | v51 | Specification |
+| Collective Validation Gate | per-shared-truth | v52 | Specification |
+| Diversity Gate | per-perspective | v53 | Specification |
+| Continuity Immune Check | per-implementation | v55 | Specification |
+| Evolution Selection Gate | per-growth mutation | v56 | Specification |
+
+The current codebase implements the *substrate* these systems operate on (EvidenceKernel, Chronicle, Scars, capability authorization) but does not yet implement the 8 gates as named, executable modules.
+
+### Capability Authorization [VERIFIED]
+
+The inter-instance protocol uses a strict three-layer authorization model:
+
+1. **Node identity** — Ed25519 keypair per node, verified via challenge/response. Note: `node_id` is a UUID-based *identifier* (a label), not a cryptographic identity. The Ed25519 keypair *is* the cryptographic identity. Challenge/response proves that the responder controls the private key bound to that node_id. See [NODE_IDENTITY.md](./NODE_IDENTITY.md) for the full distinction.
+2. **Capability authorization** — operator-controlled allowlist (`--authorize node_id:capability`)
+3. **Verified sessions** — short-lived tokens bound to the *cryptographically verified* node identity, not just the node_id label
+
+`codex_update` is in `NEVER_AUTHORIZABLE` — structurally disabled in code, not just policy-gated. No operator grant can reach it. Receiving an observation never means trusting it; only local evaluation moves belief.
+
+---
+
+## How Lantern Differs From Conventional Agent Memory
+
+| Capability | CoALA | Letta/MemGPT | Mem0 | Lantern |
+|---|---|---|---|---|
+| Evidence-based belief computation | No | No | No | Yes |
+| Formal contradiction detection | No | No | No | Yes |
+| Contradiction lifecycle (OPEN→RESOLVED) | No | No | No | Yes |
+| Error preservation (scars) | No | No | No | Yes |
+| Provenance at evidence level | No | Partial | No | Yes |
+| Hash-chained event log | No | No | No | Yes |
+| Temporal belief replay | No | No | No | Yes |
+| Inter-agent evidence exchange | No | No | No | Yes (v0.82) |
+| Read-only belief queries | No | No | No | Yes |
+| Structurally unauthorizable capabilities | No | No | No | Yes |
+| Benchmarks (LoCoMo, LongMemEval, BEAM) | Yes | Yes | Yes | No |
+
+The last row is important: Lantern has no benchmark results. The architecture is novel, but its quality relative to existing systems is unproven.
+
+---
+
+## Current Verified Status
+
+**What's verified and working:**
+
+- Evidence kernel with weighted, signed, decaying evidence [VERIFIED]
+- Belief computation via sigmoid of decayed evidence [VERIFIED]
+- Contradiction detection with severity, lifecycle, and supersession [VERIFIED]
+- Resolution events with decision, reasoning, confidence, evidence snapshot [VERIFIED]
+- Chronicle: SHA-256 hash chain, atomic writes, verify, replay, snapshot/restore [VERIFIED]
+- Scar system with Chronicle-backed persistence and replay verification [VERIFIED]
+- Ed25519 identity with challenge/response verification [VERIFIED]
+- Capability authorization with operator-controlled allowlist [VERIFIED]
+- Verified sessions with source binding [VERIFIED]
+- Inter-instance observation exchange over HTTP [VERIFIED]
+- Read-only belief queries (belief_query) [VERIFIED locally; pending remote deployment]
+- Owner-scoped storage (_OwnedDict / _OwnedList) preventing cross-instance data leakage [VERIFIED]
+- 927 tests passing, 7 skipped [VERIFIED]
+- Protocol version 0.82 [VERIFIED]
+- Package version 0.84 [VERIFIED]
+
+**What's specification only:**
+
+- 8 immune systems as named executable modules [SPECIFICATION]
+- Full 16-step organism loop [SPECIFICATION]
+- Organogenesis Pipeline as automated process [SPECIFICATION]
+- Multi-agent collective validation [SPECIFICATION]
+- Wisdom extraction and cross-context validation [SPECIFICATION]
+
+**What doesn't exist yet:**
+
+- No benchmark results (LoCoMo, LongMemEval, BEAM) [NOT DONE]
+- No external users or production deployments [NOT DONE]
+- No standardized evaluation framework [NOT DONE]
+- No formal protocol specification document separate from the implementation [NOT DONE]
+- belief_query not yet deployed on any remote node [PENDING]
+
+---
+
+## Getting Started
+
+### Install
+
+```bash
+git clone https://github.com/Lantern-svg/lantern.git
+cd lantern
+pip install -e ".[dev]"
+```
+
+### Run the Evidence Kernel
+
+```python
+from lantern.core import EvidenceKernel
+
+kernel = EvidenceKernel(owner_instance="my-agent")
+
+# Observe something
+obs = kernel.observe("The sky is blue", source="sensor-1", reliability=0.9)
+
+# Add supporting evidence
+evidence, contradiction = kernel.add_evidence("sky_color", obs.id, weight=1.0, sign=1)
+
+# Check belief (sigmoid of decayed weighted evidence)
+print(kernel.belief("sky_color"))  # → ~0.71
+
+# Observe contradicting evidence
+obs2 = kernel.observe("The sky is green", source="sensor-2", reliability=0.7)
+evidence2, contradiction = kernel.add_evidence("sky_color", obs2.id, weight=1.0, sign=-1)
+
+# Contradiction detected
+print(contradiction.status)  # → "OPEN"
+
+# Belief shifts toward uncertainty
+print(kernel.belief("sky_color"))  # → ~0.55
+
+# Resolve the contradiction
+resolution = kernel.resolve(contradiction.id, decision="sensor-1 is correct",
+                           reasoning="calibration error in sensor-2", confidence=0.85)
+```
+
+### Run Tests
+
+```bash
+python -m pytest tests/ -v --ignore=tests/test_service_integration.py
+```
+
+Expected: 927 passed, 7 skipped (the 5 skipped tests require live MCP stdio or service integration environments).
+
+### Run a Node
+
+```bash
+python -m lantern.bootstrap_node --node-id my-node --data-dir /tmp/lantern-data
+```
+
+Then check health:
+
+```bash
+curl http://localhost:8000/health
+```
+
+### Connect Two Nodes
+
+See [EXTERNAL_BOOTSTRAP.md](./EXTERNAL_BOOTSTRAP.md) for the full inter-instance connection guide, including identity verification, session establishment, and capability authorization.
+
+---
+
+## Repository Structure
+
+```
+lantern/
+├── src/lantern/
+│   ├── core.py              # EvidenceKernel, Observation, Evidence, Contradiction, Chronicle
+│   ├── scars.py             # Scar dataclass, persistence, replay verification
+│   ├── identity.py          # Ed25519 node identity, challenge/response
+│   ├── capability_authorization.py  # Operator-controlled capability allowlist
+│   ├── verified_session.py # Session management with source binding
+│   ├── bootstrap_node.py    # HTTP server: /health, /handshake, /message, /belief/query, ...
+│   ├── bootstrap_client.py  # HTTP client for connecting to other nodes
+│   ├── observation_exchange.py  # Observation sharing protocol
+│   ├── protocol.py          # Protocol version, message types
+│   ├── handshake.py         # Capability negotiation
+│   ├── codex_compare.py     # Belief comparison between instances
+│   ├── codex_explanation.py # Explanation generation for belief differences
+│   ├── compass.py           # Read-only orientation layer
+│   ├── compression.py       # Outcome → Scar validation
+│   ├── contact_ledger.py    # Contact-state ladder
+│   ├── ...                  # 48 modules total (including __init__.py)
+├── tests/
+│   ├── test_belief_query.py       # 12 tests for belief_query capability
+│   ├── test_bootstrap_transport.py # HTTP transport tests
+│   ├── test_observation_exchange.py # Observation sharing tests
+│   ├── test_identity_two_node.py  # Two-node identity verification
+│   ├── test_two_instance_integration.py # Full two-instance integration
+│   ├── test_snapshot_recovery.py  # Chronicle snapshot/recovery
+│   ├── ...                        # 53 test files total
+├── ARCHITECTURE.md          # Full module breakdown and data model
+├── EXTERNAL_BOOTSTRAP.md    # Inter-instance connection guide
+├── NODE_IDENTITY.md         # Identity model documentation
+├── demo_e2e.py              # End-to-end demonstration
+├── service.py               # FastAPI service wrapper
+├── pyproject.toml           # Package config (Python ≥3.10, PyNaCl)
+├── LICENSE                  # MIT
+```
+
+**Stats:** 48 source modules, 53 test files, ~15,600 lines of Python, 927 passing tests.
+
+---
 
 ## Roadmap
 
-1. Freeze the mathematical core (evidence update equation, decay, contradiction severity, confidence-over-time).
-2. Freeze the data model (Observation, Concept, Evidence, Belief, Contradiction, Principle, ReasoningTrace).
-3. Publish the protocol specification, independent of any single implementation.
-4. Extract and release the minimal reference implementation.
-5. Code review of the isolated public core.
+### Near-term (verified implementation → public release)
+1. Deploy belief_query on a remote node and verify at wire level [IN PROGRESS]
+2. Write the formal protocol specification, independent of the Python implementation
+3. Freeze the mathematical core (evidence update equation, decay, contradiction severity, confidence-over-time)
+4. Code review of the isolated public core
 
-## Non-goals
+### Mid-term (benchmarks and evaluation)
+5. Run Lantern's EvidenceKernel against the BEAM contradiction-resolution benchmark
+6. Evaluate against LoCoMo and LongMemEval memory benchmarks
+7. Implement and execute the 8 immune systems as named modules
+8. Build a minimal reference implementation in a second language (Rust or Go) to validate protocol independence
 
-- LBCB does not replace any language model.
-- LBCB does not assert ground truth; it reports belief state and its provenance.
-- Cross-model agreement is not treated as proof of correctness.
+### Long-term (adoption and ecosystem)
+9. Standardize the inter-instance protocol for multi-agent evidence exchange
+10. Build tooling for visualizing belief states and contradiction graphs
+11. Support external contributors and third-party implementations
+
+---
+
+## Design Philosophy
+
+Lantern is designed from dyslexic spatial cognition — thinking in structures, relationships, and patterns rather than sequences and procedures. The architecture uses spatial/archetypal naming (Marrow, Scars, Roots) reflecting the designer's cognitive pattern. This is a design principle, not just aesthetic: it produces an architecture organized around relationships and evidence rather than linear processing pipelines.
+
+Research from [dyslexic.ai](https://dyslexic.ai/research) validates that dyslexic pattern recognition, holistic thinking, and creative synthesis are genuine cognitive advantages that can inform AI architecture design. Whether this approach produces measurably better reasoning is an open question — one we hope benchmarks will answer.
+
+---
+
+## Non-Goals
+
+- Lantern does not replace any language model. It is model-agnostic.
+- Lantern does not assert ground truth. It reports belief state and its provenance.
+- Cross-model agreement is not treated as proof of correctness. It can nudge confidence but is never authoritative.
+- Lantern is not a chatbot framework, an agent orchestrator, or a tool-use platform. It is a belief engine.
+
+---
 
 ## License
 
 MIT. See [LICENSE](./LICENSE).
+
+## Contributing
+
+Lantern is an experimental research project. If you want to test, review, challenge, or contribute:
+
+1. Read [ARCHITECTURE.md](./ARCHITECTURE.md) for the full module breakdown
+2. Read [EXTERNAL_BOOTSTRAP.md](./EXTERNAL_BOOTSTRAP.md) for the inter-instance protocol
+3. Run the tests: `python -m pytest tests/ -v --ignore=tests/test_service_integration.py`
+4. Try the evidence kernel example above
+5. Open an issue with questions, challenges, or findings
+
+The most valuable contributions right now are: independent review, benchmark evaluation, and protocol specification feedback.

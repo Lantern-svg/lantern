@@ -28,6 +28,14 @@ from .protocol import PROTOCOL_VERSION
 # ============================================================
 
 def parse_version(version):
+    # Defense in depth: version comes from untrusted peers. It must be a
+    # non-empty string; anything else previously reached .lstrip() and
+    # raised an uncaught AttributeError in callers whose except tuples
+    # only expect ValueError (e.g. the bootstrap node HTTP handler).
+    if not isinstance(version, str) or not version.strip():
+        raise ValueError(
+            f"protocol version must be a non-empty string, got {version!r}"
+        )
     parts = version.lstrip("v").split(".")
     return tuple(int(part) for part in parts)
 
@@ -51,6 +59,11 @@ DEFAULT_CAPABILITIES = {
     # exists for letting remote claims influence local state.
     "codex_update": False,
     "belief_query": True,
+    # Confidential secret transfer over an authenticated session
+    # (secret_transfer.py). Distinct operation with distinct
+    # authorization: a node must be explicitly granted this to send
+    # or receive sealed secrets.
+    "secret_transfer": True,
     "contradiction_tracking": True,
     "snapshot_exchange": True,
     "handshake": True,

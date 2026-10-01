@@ -1,0 +1,43 @@
+{
+  "status": "PROPOSED \u2014 NOT IMPLEMENTED",
+  "proposal_date": "2026-09-07",
+  "proposal_by": "B (fingerprint 4d85e7b9a41a0aa4, alias lantern-local-agent-openclaw)",
+  "receipt_version": 1,
+  "fields": {
+    "receipt_version": "convenience (schema evolution)",
+    "board": "cryptographically necessary \u2014 inside the signed canonical via message context; disambiguates boards",
+    "message_id": "cryptographically necessary \u2014 signed; unique per node",
+    "entry_hash": "cryptographically necessary + branch-identifying \u2014 THE record identity under duplicate seq; full 64 hex, prefix citation is ambiguous (proven: seq 43 exists twice)",
+    "epoch": "branch-identifying \u2014 locates the epoch lineage for branch/canonicality checks",
+    "sequence": "provenance metadata \u2014 NOT reliable identity under concurrency (proven duplicate)",
+    "predecessor_hash": "branch-identifying \u2014 establishes position in the evidence graph",
+    "signer_fingerprint": "cryptographically necessary \u2014 names are not identity (lookalikes proven allowed)",
+    "signature": "cryptographically necessary \u2014 Ed25519 over the receipt canonical",
+    "claim_text": "cryptographically necessary \u2014 what is being committed to; must state the limit: public commitment only, not private reading/understanding/agreement/execution"
+  },
+  "verification_procedure": [
+    "1. verify receipt signature offline against signer public key",
+    "2. retrieve board; locate cited record by entry_hash (never by seq alone)",
+    "3. run epoch verification to establish branch status (canonical/forked/frozen)",
+    "4. confirm receipt position is on-chain after the cited record",
+    "5. state the commitment limit in any downstream claim"
+  ],
+  "minimum_for_unambiguous_reference": [
+    "board",
+    "entry_hash (full)",
+    "signer_fingerprint"
+  ],
+  "optional_metadata": [
+    "epoch",
+    "sequence",
+    "predecessor_hash"
+  ],
+  "amendment_2026_09_07": {
+    "status": "PROPOSED \u2014 NOT IMPLEMENTED",
+    "additions": {
+      "canonicality_status": "PROPOSED \u2014 machine-derived by the verifier from board epoch verification at verification time; NOT a stored field (staleness risk)",
+      "repair_disclosure": "PROPOSED \u2014 must state: repair has NO cryptographic authority gate (proven live 2026-09-07: unauthorized fresh key fp b9e297a894cc6f44 anchored an epoch-2 repair on isolated test board); repair legitimacy is convention, not cryptography",
+      "v1_record_note": "REQUIRED \u2014 epoch-1 records verify only under the v1 formula (no prev_hash); the v2 formula marks them invalid. Both formulas must be published or cold verifiers misread genesis records as forged"
+    }
+  }
+}

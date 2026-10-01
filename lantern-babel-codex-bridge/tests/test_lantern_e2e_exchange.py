@@ -44,7 +44,10 @@ from urllib.request import Request, urlopen
 import pytest
 
 from lantern import identity as identity_module
-from lantern.bootstrap_client import _verify_identity_with_peer
+from lantern.bootstrap_client import (
+    _open_session_with_proof,
+    _verify_identity_with_peer,
+)
 from lantern.protocol import create_observation_share
 
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -152,7 +155,10 @@ def _secure_send(
     verify_result = _verify_identity_with_peer(peer_base, sender_node_id, sender_identity)
     assert verify_result.get("verified") is True, verify_result
 
-    _, session = _request(peer_base + "/session/open", "POST", {"node_id": sender_node_id})
+    # Two-phase session open (candidate 229756e protocol): reuse the
+    # shipped reference consumer verbatim -- challenge, sign, prove,
+    # accept -- never a single-call session create.
+    session = _open_session_with_proof(peer_base, sender_node_id, sender_identity)
     assert session.get("created") is True, session
 
     message = create_observation_share(sender_node_id, {"content": content, "source": source, "reliability": 1.0})
@@ -196,7 +202,11 @@ def _self_open_session(*, base: str, node_id: str, data_dir: Path) -> str:
     verify_result = _verify_identity_with_peer(base, node_id, node_identity)
     assert verify_result.get("verified") is True, verify_result
 
-    _, session = _request(base + "/session/open", "POST", {"node_id": node_id})
+    # Two-phase session open (candidate 229756e protocol): same
+    # challenge/proof flow as any external caller, via the shipped
+    # reference consumer -- a self-session is NOT a shortcut around
+    # proof-of-possession.
+    session = _open_session_with_proof(base, node_id, node_identity)
     assert session.get("created") is True, session
     return session["session_id"]
 

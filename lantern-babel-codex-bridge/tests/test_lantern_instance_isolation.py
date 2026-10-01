@@ -58,8 +58,7 @@ def test_cross_instance_read_fails_by_state_boundary(tmp_path):
     _, identity_b, _, kernel_b = _ready_instance(tmp_path, "node-B", "bob", "tok-b")
 
     obs_a = kernel_a.observe("A private fact", "local", 0.9)
-    imported = copy.deepcopy(obs_a)
-    imported.owner_instance = identity_a.public_key_hex
+    imported = dataclasses.replace(copy.deepcopy(obs_a), owner_instance=identity_a.public_key_hex)
     with pytest.raises(own.PermissionError if hasattr(own, "PermissionError") else PermissionError):
         kernel_b.observations[imported.id] = imported
 
@@ -107,8 +106,13 @@ def test_shared_mutable_metadata_does_not_leak_across_observation_copies(tmp_pat
     obs = kernel_a.observe("fact", "local", 0.9, metadata=metadata)
 
     clone = copy.deepcopy(obs)
-    clone.metadata["nested"] = {"x": 2}
+    # With immutable Observation (frozen dataclass + MappingProxyType metadata),
+    # direct mutation of metadata is blocked at the language level.
+    import pytest as _pytest
+    with _pytest.raises(TypeError):
+        clone.metadata["nested"] = {"x": 2}
 
+    # Original metadata is still intact — no leak across copies.
     assert kernel_a.observations[obs.id].metadata["nested"] == {"x": 1}
 
 
