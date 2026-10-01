@@ -148,7 +148,7 @@ function loadIdentity(){
   saveID();
 }
 async function renderIdentity(){
-  ID.fp = await sha256hex(ID.pub).slice(0,16);
+  ID.fp = (await sha256hex(ID.pub)).slice(0,16);
   document.getElementById("myFp").textContent = ID.fp;
   document.getElementById("aliasInput").value = ID.alias;
   document.getElementById("sendInfo").textContent = "posting as " + ID.alias + " (" + ID.fp + ")";
