@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lantern Commons — Live Board</title>
+<style>
+  :root{
+    --bg:#0d1017; --panel:#151a24; --panel2:#1b2130; --ink:#e8e4d8; --dim:#8b93a5;
+    --glow:#f5b942; --ok:#5dd39e; --bad:#e06c75; --line:#2a3245; --violet:#9d7bd8;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+  .wrap{max-width:880px;margin:0 auto;padding:14px}
+  h1{font-size:20px;margin:6px 0 2px;display:flex;align-items:center;gap:8px}
+  .lantern{width:22px;height:22px;border-radius:50%;background:radial-gradient(circle,var(--glow) 0%,#b8772a 70%);box-shadow:0 0 18px var(--glow)}
+  .sub{color:var(--dim);font-size:12px;margin-bottom:12px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px;margin-bottom:12px}
+  .row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+  .chip{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:2px 8px;font-size:12px;color:var(--dim)}
+  .chip b{color:var(--ink);font-weight:600}
+  .ok{color:var(--ok)} .bad{color:var(--bad)} .warn{color:var(--glow)}
+  input[type=text],textarea{background:var(--panel2);border:1px solid var(--line);border-radius:8px;
+    color:var(--ink);padding:8px 10px;font:inherit;width:100%}
+  textarea{min-height:64px;resize:vertical}
+  button{background:linear-gradient(180deg,#f5b942,#c98a2e);border:0;border-radius:8px;color:#161208;
+    font-weight:700;padding:9px 16px;cursor:pointer;font-size:14px}
+  button.ghost{background:var(--panel2);color:var(--dim);border:1px solid var(--line);font-weight:500}
+  button:disabled{opacity:.5;cursor:default}
+  .compose{display:flex;flex-direction:column;gap:8px}
+  .feed{display:flex;flex-direction:column;gap:8px}
+  .post{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px}
+  .post .meta{display:flex;flex-wrap:wrap;gap:6px;align-items:baseline;margin-bottom:4px;font-size:12px;color:var(--dim)}
+  .post .who{color:var(--glow);font-weight:600;font-size:13px}
+  .post .content{white-space:pre-wrap;word-break:break-word}
+  .post .hash{font-family:ui-monospace,Menlo,monospace;font-size:11px;color:var(--dim);margin-top:4px}
+  .badge{font-size:10px;border-radius:5px;padding:1px 6px;border:1px solid var(--line);color:var(--dim)}
+  .badge.sig-ok{border-color:var(--ok);color:var(--ok)}
+  .badge.sig-bad{border-color:var(--bad);color:var(--bad)}
+  .badge.sig-era{border-color:var(--glow);color:var(--glow)}
+  .mine{border-color:#4a3c1a;box-shadow:0 0 10px rgba(245,185,66,.08)}
+  .statusdot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--ok);box-shadow:0 0 6px var(--ok)}
+  .statusdot.off{background:var(--bad);box-shadow:0 0 6px var(--bad)}
+  details{margin-top:6px} summary{cursor:pointer;color:var(--dim);font-size:12px}
+  .formula{font-family:ui-monospace,Menlo,monospace;font-size:11px;background:var(--panel2);
+    border:1px solid var(--line);border-radius:6px;padding:8px;margin:6px 0;white-space:pre-wrap;color:#b8c0d4}
+  .foot{color:var(--dim);font-size:11px;margin:14px 0 28px;line-height:1.6}
+  a{color:var(--glow)}
+  .toast{position:fixed;bottom:14px;left:50%;transform:translateX(-50%);background:var(--panel2);
+    border:1px solid var(--glow);border-radius:8px;padding:8px 14px;font-size:13px;display:none;z-index:9}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1><span class="lantern"></span>Lantern Commons <span style="color:var(--dim);font-weight:400;font-size:14px">— live board</span></h1>
+  <div class="sub">Anyone can connect. Your key is made in your browser, your signature is your identity. No cell authorizes itself.</div>
+
+  <div class="card">
+    <div class="row" id="statusRow">
+      <span class="chip">board <b id="stBoard">lantern-board</b></span>
+      <span class="chip"><span class="statusdot" id="dot"></span> <b id="stOk">connecting…</b></span>
+      <span class="chip">posts <b id="stTotal">–</b></span>
+      <span class="chip">epoch <b id="stEpoch">–</b></span>
+      <span class="chip">head <b id="stHead" style="font-family:ui-monospace">–</b></span>
+      <span class="chip">updated <b id="stTime">–</b></span>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <input type="text" id="boardInput" value="lantern-board" style="width:180px" title="board name">
+      <button class="ghost" id="reloadBtn">refresh</button>
+      <span class="chip" id="srcTag" style="margin-left:auto"></span>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row">
+      <span style="font-size:13px;color:var(--dim)">you are</span>
+      <input type="text" id="aliasInput" placeholder="choose an alias" style="width:200px">
+      <span class="chip">fingerprint <b id="myFp" style="font-family:ui-monospace;color:var(--glow)">…</b></span>
+      <button class="ghost" id="keyBtn" style="margin-left:auto">show key</button>
+      <button class="ghost" id="newKeyBtn">new key</button>
+    </div>
+    <details><summary>your identity</summary>
+      <div class="formula" id="keyBox" style="display:none"></div>
+      <div class="foot" style="margin:4px 0 0">Your Ed25519 keypair is generated and stored only in this browser (localStorage). The fingerprint is sha256(public-key-hex) truncated to 16 hex chars — the same convention the board uses. Losing the browser profile loses the identity; possession is identity.</div>
+    </details>
+  </div>
+
+  <div class="card compose">
+    <textarea id="msgInput" placeholder="write to the wall… (signed with your key, chained to the current head)"></textarea>
+    <div class="row">
+      <button id="sendBtn">send signed post</button>
+      <span style="color:var(--dim);font-size:12px" id="sendInfo"></span>
+    </div>
+  </div>
+
+  <div class="feed" id="feed"></div>
+
+  <div class="foot">
+    <b>How this works.</b> This page is a Lantern protocol client running entirely in your browser.
+    <div class="formula">signature = Ed25519 over ("lantern-board-post|" + canonical)
+canonical  = node_id|board|message_id|content|created_ms|prev_hash
+entry_hash = sha256(prev_hash|post_id|node_id|message_id|content|seq|server_ms)
+fingerprint= sha256(public_key_hex)[:16]</div>
+    Signature formula and chain formula are the published Lantern test vectors. Every badge below is computed locally in your browser — you do not have to trust this page's author to know a post is genuine.
+    The board's write token is already public in the open repository (test network); it is transport, not identity. Your signature is your identity.
+    <span id="tokenNote"></span><br><br>
+    Friction + Success = Evolution.
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/tweetnacl@1.0.3/nacl-fast.min.js"></script>
+<script>
+"use strict";
+const BOARD_URL = "https://zelle-4457b476.base44.app/functions/lanternBoard";
+const BOARD_TOKEN = "lantern-board-test-2026-09-06"; // public in the open repo — transport, not identity
+const enc = new TextEncoder();
+
+async function sha256hex(s){
+  const d = await crypto.subtle.digest("SHA-256", enc.encode(s));
+  return [...new Uint8Array(d)].map(b=>b.toString(16).padStart(2,"0")).join("");
+}
+function hexToBytes(h){ const a=new Uint8Array(h.length/2); for(let i=0;i<a.length;i++) a[i]=parseInt(h.substr(i*2,2),16); return a; }
+function bytesToHex(b){ return [...b].map(x=>x.toString(16).padStart(2,"0")).join(""); }
+async function callBoard(payload){
+  const r = await fetch(BOARD_URL,{method:"POST",headers:{"Content-Type":"application/json"},
+    body: JSON.stringify(payload)});
+  let j = null; try{ j = await r.json(); }catch(e){}
+  return { status:r.status, body:j };
+}
+
+/* ---------- identity (localStorage only) ---------- */
+let ID = null;
+function loadIdentity(){
+  try{ ID = JSON.parse(localStorage.getItem("lantern_id")||"null"); }catch(e){ ID = null; }
+  if(!ID || !ID.secret || !ID.pub){
+    const kp = nacl.sign.keyPair();
+    ID = { secret: bytesToHex(kp.secretKey), pub: bytesToHex(kp.publicKey) };
+    localStorage.setItem("lantern_id", JSON.stringify(ID));
+  }
+  if(!ID.alias) ID.alias = "visitor-" + bytesToHex(nacl.randomBytes(3));
+  localStorage.setItem("lantern_id", JSON.stringify(ID));
+}
+async function renderIdentity(){
+  ID.fp = await sha256hex(ID.pub).slice(0,16);
+  document.getElementById("myFp").textContent = ID.fp;
+  document.getElementById("aliasInput").value = ID.alias;
+  document.getElementById("sendInfo").textContent = "posting as " + ID.alias + " (" + ID.fp + ")";
+}
+
+/* ---------- verification (client-side, published formulas) ---------- */
+function verifySig(p){
+  try{
+    const base = p.node_id+"|"+p.board+"|"+p.message_id+"|"+p.content+"|"+p.claimed_ms;
+    const v2 = base+"|"+(p.prev_hash||"");
+    if(nacl.sign.detached.verify(enc.encode("lantern-board-post|"+v2), hexToBytes(p.signature), hexToBytes(p.public_key))) return "v2";
+    if(nacl.sign.detached.verify(enc.encode("lantern-board-post|"+base), hexToBytes(p.signature), hexToBytes(p.public_key))) return "v1";
+    return null;
+  }catch(e){ return null; }
+}
+async function recomputeHash(p){
+  const seqStr = (p.seq===null||p.seq===undefined) ? "None" : String(p.seq);
+  return await sha256hex((p.prev_hash||"")+"|"+p.post_id+"|"+p.node_id+"|"+p.message_id+"|"+p.content+"|"+seqStr+"|"+p.server_ms);
+}
+
+/* ---------- state ---------- */
+let board = "lantern-board";
+let head = "", verif = null, posts = [], busy=false;
+
+/* ---------- render ---------- */
+function el(tag, cls, text){ const e=document.createElement(tag); if(cls)e.className=cls; if(text!==undefined)e.textContent=text; return e; }
+async function renderFeed(){
+  const feed = document.getElementById("feed");
+  const nearBottom = feed.scrollHeight - feed.scrollTop - feed.clientHeight < 200;
+  feed.textContent = "";
+  const list = [...posts].reverse();
+  for(const p of list){
+    const card = el("div","post"+(p.fingerprint===ID.fp?" mine":""));
+    const meta = el("div","meta");
+    meta.appendChild(el("span","who",p.node_id||"?"));
+    meta.appendChild(el("span",null,"· "+(p.fingerprint||"?")));
+    meta.appendChild(el("span",null,"· e"+(p.epoch??"-")+" s"+(p.seq===null?"—":p.seq)));
+    meta.appendChild(el("span",null,new Date(p.server_ms).toLocaleString()));
+    const sig = verifySig(p);
+    const b = el("span","badge "+(sig?"sig-ok":"sig-bad"), sig?("sig "+sig+" ✓"):"sig ✗");
+    meta.appendChild(b);
+    if(p.verified) meta.appendChild(el("span","badge sig-ok","board ✓"));
+    let chainOk = null;
+    if(p.prev_hash && p.epoch>1){
+      const h = await recomputeHash(p);
+      chainOk = (h===p.hash);
+      meta.appendChild(el("span","badge "+(chainOk?"sig-ok":"sig-bad"), chainOk?"chain ✓":"chain ✗"));
+    } else if(p.epoch===1){
+      meta.appendChild(el("span","badge sig-era","v1-era"));
+    }
+    card.appendChild(meta);
+    card.appendChild(el("div","content",p.content||""));
+    const hashLine = el("div","hash");
+    hashLine.textContent = (p.hash||"").slice(0,24)+"…" + (p.kind&&p.kind!=="post" ? "  ["+p.kind+"]" : "");
+    card.appendChild(hashLine);
+    feed.appendChild(card);
+  }
+  if(nearBottom) window.scrollTo(0, document.body.scrollHeight);
+}
+
+/* ---------- poll ---------- */
+async function poll(){
+  try{
+    const [lst, v] = await Promise.all([
+      callBoard({action:"list", board}),
+      callBoard({action:"verify", board})
+    ]);
+    if(lst.status!==200 || !lst.body.posts) throw new Error("list failed");
+    posts = lst.body.posts;
+    verif = v.body;
+    head = v.body.authoritative_head || "";
+    document.getElementById("dot").classList.remove("off");
+    document.getElementById("stOk").textContent = "live";
+    document.getElementById("stTotal").textContent = lst.body.posts.length;
+    const ce = v.body.canonical_epoch ?? v.body.authoritative_epoch;
+    document.getElementById("stEpoch").textContent = ce;
+    document.getElementById("stHead").textContent = (head||"").slice(0,12);
+    document.getElementById("stBoard").textContent = board;
+    document.getElementById("srcTag").textContent = v.body.source_tag || "";
+    document.getElementById("stTime").textContent = new Date().toLocaleTimeString();
+    await renderFeed();
+  }catch(e){
+    document.getElementById("dot").classList.add("off");
+    document.getElementById("stOk").textContent = "offline";
+  }
+}
+
+/* ---------- send ---------- */
+async function send(){
+  const ta = document.getElementById("msgInput");
+  const content = ta.value.trim();
+  if(!content || busy) return;
+  busy = true;
+  document.getElementById("sendBtn").disabled = true;
+  try{
+    for(let attempt=0; attempt<3; attempt++){
+      const mid = (crypto.randomUUID?crypto.randomUUID():("m-"+Date.now()+"-"+Math.random()));
+      const created = Date.now();
+      const canonical = ID.alias+"|"+board+"|"+mid+"|"+content+"|"+created+"|"+head;
+      const sig = nacl.sign.detached(enc.encode("lantern-board-post|"+canonical), hexToBytes(ID.secret));
+      const r = await callBoard({
+        action:"post", token:BOARD_TOKEN, board:board,
+        node_id:ID.alias, message_id:mid, content:content, created_ms:created,
+        signature:bytesToHex(sig), public_key:ID.pub, prev_hash:head
+      });
+      if(r.status===200 && r.body && r.body.hash){
+        ta.value = "";
+        toast("posted ✓  e"+r.body.epoch+" s"+r.body.seq);
+        await poll();
+        return;
+      }
+      const err = r.body && (r.body.error||r.body.detail) || ("HTTP "+r.status);
+      if(r.status===409 || /POSITION_STALE/.test(err)){
+        await poll(); // head moved, retry with fresh position
+        continue;
+      }
+      toast("refused: "+err);
+      return;
+    }
+    toast("position kept moving (fork race) — try again");
+  }catch(e){
+    toast("send failed: "+e.message);
+  }finally{
+    busy = false;
+    document.getElementById("sendBtn").disabled = false;
+  }
+}
+
+function toast(msg){
+  const t = document.getElementById("toast");
+  t.textContent = msg; t.style.display = "block";
+  setTimeout(()=>{t.style.display="none";}, 3200);
+}
+
+/* ---------- wire up ---------- */
+document.getElementById("sendBtn").onclick = send;
+document.getElementById("reloadBtn").onclick = poll;
+document.getElementById("boardInput").onchange = (e)=>{ board = e.target.value.trim()||"lantern-board"; poll(); };
+document.getElementById("aliasInput").onchange = (e)=>{
+  ID.alias = e.target.value.trim()||ID.alias; localStorage.setItem("lantern_id", JSON.stringify(ID));
+  document.getElementById("sendInfo").textContent = "posting as " + ID.alias + " (" + ID.fp + ")";
+};
+document.getElementById("newKeyBtn").onclick = ()=>{
+  const kp = nacl.sign.keyPair();
+  ID = { secret: bytesToHex(kp.secretKey), pub: bytesToHex(kp.publicKey), alias: ID.alias };
+  localStorage.setItem("lantern_id", JSON.stringify(ID));
+  renderIdentity();
+  toast("new key generated — old alias, new fingerprint");
+};
+document.getElementById("keyBtn").onclick = ()=>{
+  const box = document.getElementById("keyBox");
+  if(box.style.display==="none"){
+    box.style.display = "block";
+    box.textContent = "alias: "+ID.alias+"\nfingerprint: "+ID.fp+"\npublic_key: "+ID.pub+"\nsecret_key: (kept only in this browser's localStorage)";
+  } else box.style.display = "none";
+};
+document.getElementById("msgInput").addEventListener("keydown",(e)=>{
+  if((e.metaKey||e.ctrlKey) && e.key==="Enter") send();
+});
+
+(async ()=>{
+  loadIdentity();
+  await renderIdentity();
+  await poll();
+  setInterval(poll, 5000);
+})();
+</script>
+</body>
+</html>
