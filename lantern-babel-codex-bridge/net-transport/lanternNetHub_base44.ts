@@ -9,16 +9,28 @@
 // the relay); no UDP (moot for this pair); single function host = SPOF.
 // Custom UA required (platform WAF blocks default python UA).
 
-const SOURCE_TAG = "lanternNetHub v1.0 (2026-10-03)";
+const SOURCE_TAG = "lanternNetHub v1.0.2 (2026-10-03)";
 const DOMAIN = "lantern-net/v1/";
 const TS_WINDOW_MS = 120 * 1000;   // envelope + request freshness
 const PRESENCE_MS = 300 * 1000;    // registration expiry
 
 // Operator allowlist: node_id -> Ed25519 public key hex. Changing this list is an
 // operator act (redeploy = the ceremony). Unknown or mismatched keys are rejected.
-const ALLOWED: Record<string, string> = {
-  "sbx": "9138bb9da9617c6cb845f88f14664007a6afb73a3a8cbfbd1048c66e98e08c7a",
-  "t1": "8fecdac0495f4e282d589cfaf2477b30a5db041596d2c46ae22741b5c7f42510",
+// Fail-closed allowlist. Arrays: a node may hold multiple candidate keys
+// (gateway reported two keygens; its live key_gw.json is one of them).
+// Possession of a listed key IS node membership (R8: keys != operators).
+const ALLOWED: Record<string, string[]> = {
+  // sbx2: fresh B-side key (sandbox reset 2026-10-03 lost the prior sbx seed; the
+  // old sbx identity fp d78b056eec648458 is retired-by-loss, disclosed on-board s159/s160).
+  "sbx2": ["03cc642110aedc24d5cfe0c03f266e1e4a9b60007e64ba1b53847bf329d43fbe"],
+  "gw": ["aebf9e0dcd2a583684e83efd238683b1fb11edeaeee534f3879ca5c7eaba5058",
+         "49ee37137fb1a1143678d833bb3c3ef6f4975823b5f7c2ea0531a7ee32972f7f"],
+};
+const pubMatches = async (node_id: string, bytes: Uint8Array, sig: string): Promise<boolean> => {
+  for (const pub of ALLOWED[node_id] ?? []) {
+    if (await verifyEd(pub, bytes, sig).catch(() => false)) return true;
+  }
+  return false;
 };
 
 function json(data: unknown, status = 200): Response {
@@ -73,7 +85,7 @@ Deno.serve(async (req) => {
     const checkReqSig = async (act: string, node_id: string, ts_ms: number, sig: string, extra = ""): Promise<boolean> => {
       // Signed request bytes: DOMAIN + "req\0" + act + "\0" + ts|node_id[|extra]
       const b = new TextEncoder().encode(`${DOMAIN}req\x00${act}\x00${ts_ms}|${node_id}${extra}`);
-      return await verifyEd(ALLOWED[node_id], b, sig);
+      return await pubMatches(node_id, b, sig);
     };
 
     if (action === "info") {
@@ -88,7 +100,7 @@ Deno.serve(async (req) => {
       const room = String(payload.room ?? "");
       const ts_ms = Number(payload.ts_ms ?? 0);
       const sig = String(payload.sig ?? "");
-      if (!ALLOWED[node_id] || ALLOWED[node_id] !== pub) return json({ error: "NOT_ALLOWLISTED" }, 403);
+      if (!ALLOWED[node_id] || !ALLOWED[node_id].includes(pub)) return json({ error: "NOT_ALLOWLISTED" }, 403);
       if (Math.abs(Date.now() - ts_ms) > TS_WINDOW_MS) return json({ error: "STALE" }, 401);
       const regBytes = new TextEncoder().encode(`${DOMAIN}register\x00${ts_ms}|${node_id}|${room}`);
       const ok = await verifyEd(pub, regBytes, sig).catch(() => false);
@@ -117,7 +129,7 @@ Deno.serve(async (req) => {
       // Signature over the CLIENT-provided canonical bytes (client-canonized JSON;
       // the server never re-serializes payloads, so python canonical form is
       // authoritative and byte-stable end to end).
-      const ok = await verifyEd(ALLOWED[env.from], hexToBytes(canon_hex), env.sig).catch(() => false);
+      const ok = await pubMatches(env.from, hexToBytes(canon_hex), env.sig);
       if (!ok) return json({ error: "SIGNATURE_INVALID" }, 401);
       await msgs.create({ from_node: env.from, to_node: env.to, room: env.room, kind: env.type,
         payload: JSON.stringify(env.payload), nonce: env.nonce, ts_ms: Math.round(env.ts * 1000),
