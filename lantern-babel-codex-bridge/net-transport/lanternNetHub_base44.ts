@@ -20,9 +20,9 @@ const PRESENCE_MS = 300 * 1000;    // registration expiry
 // (gateway reported two keygens; its live key_gw.json is one of them).
 // Possession of a listed key IS node membership (R8: keys != operators).
 const ALLOWED: Record<string, string[]> = {
-  // sbx2: fresh B-side key (sandbox reset 2026-10-03 lost the prior sbx seed; the
-  // old sbx identity fp d78b056eec648458 is retired-by-loss, disclosed on-board s159/s160).
-  "sbx2": ["03cc642110aedc24d5cfe0c03f266e1e4a9b60007e64ba1b53847bf329d43fbe"],
+  // sbx3: B-side key, seed persisted in LanternKeyVault entity (sandbox resets
+  // 2026-10-03 wiped sbx fp d78b056e and sbx2 fp 79d605da seeds from disk).
+  "sbx3": ["443fdc76d153fc61ac9b35a23180f1ffcb38bc2d1d291ed3fda8eaf04c2868d0"],
   "gw": ["aebf9e0dcd2a583684e83efd238683b1fb11edeaeee534f3879ca5c7eaba5058",
          "49ee37137fb1a1143678d833bb3c3ef6f4975823b5f7c2ea0531a7ee32972f7f"],
 };
