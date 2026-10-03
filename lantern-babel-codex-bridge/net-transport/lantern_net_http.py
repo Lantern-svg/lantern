@@ -115,7 +115,21 @@ class HttpNode(Node):
         await asyncio.wait_for(self.done_fut, a.timeout)
 
 async def cmd_node(a):
-    n = HttpNode(a); await n.connect()
+    n = HttpNode(a)
+    if getattr(a, "allow_hub", False):
+        # Opt-in federation: merge hub-registered member pubs into the local
+        # allowlist. Local file entries ALWAYS win (node sovereignty); hub list
+        # is convenience, not authority. Every envelope is still sig-checked.
+        try:
+            r = call({"action": "members"})
+            merged = 0
+            for nid, pub in (r.get("members") or {}).items():
+                if nid not in n.allow and pub:
+                    n.allow[nid] = pub; merged += 1
+            print(f"[{a.key}] allow-hub: {merged} member key(s) merged (local file wins)", flush=True)
+        except Exception as e:
+            print(f"[{a.key}] allow-hub unavailable ({e}); continuing with local allowlist", flush=True)
+    await n.connect()
     tasks = [asyncio.create_task(n.heartbeat()), asyncio.create_task(n.recv_loop())]
     try:
         if a.cmd == "submit":
@@ -136,6 +150,8 @@ def main():
         p.add_argument("--fn", default="sha256", choices=sorted(FUNCS))
         p.add_argument("--input", default='"hello lantern"')
         p.add_argument("--timeout", type=float, default=120)
+        p.add_argument("--allow-hub", action="store_true",
+                       help="opt-in: merge hub member keys into local allowlist (local file wins)")
     a = ap.parse_args(); a.mode = a.cmd
     asyncio.run(cmd_node(a))
 
