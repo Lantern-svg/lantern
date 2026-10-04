@@ -21,6 +21,11 @@ class ToolDescriptor:
     # Logical scopes this tool's execution requires (decision_gate.authorize_tool_call
     # derives required scopes from HERE, never from model-requested scopes).
     scopes: tuple = ()
+    # Per-tool confidence threshold. None = the session's mandatory
+    # required_confidence applies. An explicit float (e.g. 0.0 for
+    # observational tools) is fixed in the REGISTERED descriptor -- the
+    # model can never raise or lower it.
+    required_confidence: object = None
 
 
 @dataclass

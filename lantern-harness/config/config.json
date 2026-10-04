@@ -11,5 +11,10 @@
   "tool_policy": {
     "required_confidence": 0.8,
     "allowed_scopes": []
+  },
+  "board": {
+    "endpoint": "https://zelle-4457b476.base44.app/functions/lanternBoard",
+    "board": "lantern-board",
+    "token_env": "LANTERN_BOARD_TOKEN"
   }
 }

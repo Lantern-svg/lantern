@@ -34,7 +34,8 @@ from typing import Any, Optional, Sequence
 from .bridge import LanternBridge
 from .confidence_field import ConfidenceField, ConfidenceFieldReading
 from .decision_gate import (
-    DEFAULT_REQUIRED_CONFIDENCE, authorize_tool_call, execute_tool_call, load_tool_policy,
+    DEFAULT_REQUIRED_CONFIDENCE, authorize_tool_call, effective_required_confidence,
+    execute_tool_call, load_tool_policy,
 )
 from .decision_state_machine import DecisionStateMachine, DecisionReading
 from .perspective_differential import Perspective
@@ -177,8 +178,10 @@ class OperatingLoop:
                 evidence_confidence=float(evidence_conf),
                 tool_boundary=self.tool_boundary,
             )
+            effective = effective_required_confidence(
+                self.tool_boundary, tool_name, self.required_confidence)
             tool_call_result, tool_result = execute_tool_call(
-                tool_call, decision_result, self.required_confidence,
+                tool_call, decision_result, effective,
                 self.tool_boundary, decision_log=self.decision_log,
             )
             action_record = self.reality_boundary.record_result(proposal, tool_result, decision=decision_result)

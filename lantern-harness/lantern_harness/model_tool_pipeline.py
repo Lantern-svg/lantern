@@ -41,7 +41,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Optional, Sequence
 
-from .decision_gate import DEFAULT_REQUIRED_CONFIDENCE, authorize_tool_call, execute_tool_call
+from .decision_gate import (
+    DEFAULT_REQUIRED_CONFIDENCE, authorize_tool_call, effective_required_confidence, execute_tool_call,
+)
 from .reasoning.tool_calls import ToolCallParseError, parse_tool_calls
 from .tool_contract import Decision, ToolCall, ToolCallResult, ToolSpec, blocked_message
 from .tools.boundary import ToolBoundary
@@ -169,8 +171,10 @@ def run_model_tool_turn(
         )
         turn.decisions += (decision,)
         # ---- stage: execute_tool_call (the single execution path) -------
+        effective = effective_required_confidence(
+            tool_boundary, call.tool_name, required_confidence)
         tool_call_result, tool_result = execute_tool_call(
-            call, decision, required_confidence, tool_boundary, decision_log=decision_log,
+            call, decision, effective, tool_boundary, decision_log=decision_log,
         )
         turn.results += (tool_call_result,)
         if not tool_call_result.executed:

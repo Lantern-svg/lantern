@@ -29,3 +29,14 @@ def load_config(path: Path | str = DEFAULT_CONFIG_PATH) -> dict:
             },
         }
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def board_config(config: dict) -> dict | None:
+    """Validated board configuration, or None when the board is not
+    configured (tools then fail closed as BLOCKED). Never contains or
+    reads the token value itself -- token_env names the environment
+    variable read at call time."""
+    section = (config or {}).get("board") or None
+    if not section or not section.get("endpoint") or not section.get("board"):
+        return None
+    return section

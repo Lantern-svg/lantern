@@ -259,7 +259,13 @@ print(f"file untouched by simulation: {'simulated-only' not in TARGET.read_text(
 prop2 = rb.propose(intent="append marker via append_local_note",
                    decision=res.decision, tool_name="append_local_note",
                    inputs={"text": "actually-executed"})
-act_rec = rb.act(prop2, tool_boundary, text="actually-executed")
+# act() now refuses consequential tools; the executed leg goes through the gate
+from lantern_harness.decision_gate import authorize_tool_call, execute_tool_call as _exec
+from lantern_harness.tool_contract import ToolCall as _TC
+_call2 = _TC(id="live-act-leg", tool_name="append_local_note", arguments={"text": "actually-executed"})
+_dec2 = authorize_tool_call(_call2, gated_loop.allowed_scopes, evidence_confidence=0.95, tool_boundary=tool_boundary)
+_tcr2, _tr2 = _exec(_call2, _dec2, 0.8, tool_boundary)
+act_rec = rb.record_result(prop2, _tr2, decision=_dec2)
 print(f"act:      execution_mode={act_rec.execution_mode} result_status={act_rec.result_status} is_real_success={act_rec.is_real_success()}")
 print(f"file contains executed marker: {'actually-executed' in TARGET.read_text()}")
 ITEM_4b = mark("4b (simulate != act: hypothetical marked simulated, real marked real)",

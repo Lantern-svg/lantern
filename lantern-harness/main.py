@@ -256,6 +256,20 @@ def main():
     engine = result["engine"]
     tool_boundary = ToolBoundary()
     branch_store = BranchStore()
+    # Board tools: registered here (registry only); authorization and session
+    # scopes remain operator-owned acts. A session grants visibility via
+    # tb.authorize(...) + loop allowed_scopes, never via the model.
+    from lantern_harness.config import load_config, board_config
+    from lantern_harness.board.client import BoardClient
+    from lantern_harness.board.tools import register_board_tools
+    _cfg = load_config()
+    if board_config(_cfg):
+        register_board_tools(tool_boundary, BoardClient(
+            endpoint=_cfg["board"]["endpoint"], board=_cfg["board"]["board"],
+            node_id=_cfg["board"].get("node_id", bridge.node_id if hasattr(bridge, "node_id") else "lantern-harness-node"),
+            token_env=_cfg["board"].get("token_env", "LANTERN_BOARD_TOKEN"),
+            identity_provider=lambda: getattr(bridge, "_identity", None)))
+        print("Board tools registered (NOT authorized): board_read board_get_entry board_verify board_post")
     loop = OperatingLoop(bridge, tool_boundary)
     permission_authority = PermissionAuthority()
 

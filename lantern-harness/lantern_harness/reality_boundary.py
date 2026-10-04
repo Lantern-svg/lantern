@@ -183,6 +183,25 @@ class RealityBoundary:
                 notes=("tool %r is not authorized in ToolBoundary" % proposal.tool_name,),
             )
 
+        # BYPASS CLOSURE (2026-10-04): this deprecated path used to execute
+        # ANY authorized tool without the mandatory decision gate. It now
+        # serves ONLY tools explicitly registered as observational
+        # (required_confidence == 0.0). Consequential tools -- including
+        # every board mutation -- are refused here and must go through
+        # decision_gate.execute_tool_call().
+        descriptor = tool_boundary.get(proposal.tool_name)
+        if getattr(descriptor, "required_confidence", None) != 0.0:
+            return ActionRecord(
+                proposal=proposal,
+                authorization_status="AUTHORIZED",
+                execution_mode=EXECUTION_MODE_NOT_EXECUTED,
+                result_status=RESULT_NOT_EXECUTED,
+                notes=(
+                    "DEPRECATED path refused: %r is not an observational tool; consequential "
+                    "execution must go through decision_gate.execute_tool_call()" % proposal.tool_name,
+                ),
+            )
+
         tool_result = tool_boundary.execute(proposal.tool_name, **kwargs)
         if tool_result.status == "EXECUTED":
             return ActionRecord(

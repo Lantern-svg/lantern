@@ -48,6 +48,19 @@ def derive_tool_scopes(tool_boundary: ToolBoundary, tool_name: str) -> tuple:
     return (f"tool:{tool_name}",)
 
 
+def effective_required_confidence(tool_boundary: ToolBoundary, tool_name: str, session_required_confidence: float) -> float:
+    """The threshold that actually applies to one tool call: the
+    REGISTERED descriptor's per-tool override, else the session's
+    mandatory threshold. Registration is harness-owned, so this can only
+    make execution stricter than or equal to session policy for
+    consequential tools, and only registered observational tools may
+    run below it."""
+    descriptor = tool_boundary.get(tool_name)
+    if descriptor is not None and getattr(descriptor, "required_confidence", None) is not None:
+        return float(descriptor.required_confidence)
+    return float(session_required_confidence)
+
+
 def authorize_tool_call(
     tool_call: ToolCall,
     allowed_scopes: Iterable,

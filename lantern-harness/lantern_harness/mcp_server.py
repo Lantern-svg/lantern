@@ -76,12 +76,44 @@ class LanternMCPContext:
         self.bridge.ensure_identity()
         self.bridge.startup()
         self.tool_boundary = ToolBoundary()
+        # Board tools: registered through the SAME registry; MCP executes
+        # them ONLY through the decision gate (see the board tool wrappers
+        # below) -- there is no MCP -> board client shortcut.
+        from .config import board_config, load_config
+        from .board.client import BoardClient
+        from .board.tools import register_board_tools
+        self._board_client = None
+        cfg = load_config()
+        if board_config(cfg):
+            self._board_client = BoardClient(
+                endpoint=cfg["board"]["endpoint"], board=cfg["board"]["board"],
+                node_id=cfg["board"].get("node_id", "lantern-harness-node"),
+                token_env=cfg["board"].get("token_env", "LANTERN_BOARD_TOKEN"),
+                identity_provider=lambda: getattr(self.bridge, "_identity", None),
+            )
+            register_board_tools(self.tool_boundary, self._board_client)
+            # Observational board tools are session-authorized; the
+            # consequential board_post needs an explicit operator opt-in.
+            import os as _os
+            for _n in ("board_read", "board_get_entry", "board_verify"):
+                self.tool_boundary.authorize(_n)
+            # The operator-configured server grants the observational
+            # session scopes alongside authorization. The consequential
+            # board_post needs BOTH an explicit env opt-in and its scope.
+            self.loop.allowed_scopes.update({"board.read", "board.verify"})
+            if _os.environ.get("LANTERN_ALLOW_BOARD_POST") == "1":
+                self.tool_boundary.authorize("board_post")
+                self.loop.allowed_scopes.add("board.post")
         self.compiler = PromptCompiler(bridge=self.bridge)
         self.confidence_field = ConfidenceField(bridge=self.bridge)
         self.decision_machine = DecisionStateMachine()
         self.branch_store = BranchStore()
         self.spine_committer = SpineCommitter(self.bridge)
-        self.loop = OperatingLoop(self.bridge, self.tool_boundary)
+        from .decision_gate import load_tool_policy
+        _policy = load_tool_policy(cfg)
+        self.loop = OperatingLoop(self.bridge, self.tool_boundary,
+                                  required_confidence=_policy["required_confidence"],
+                                  allowed_scopes=_policy["allowed_scopes"])
         self.permission_authority = PermissionAuthority()
 
 
@@ -216,6 +248,68 @@ def build_server(context: Optional[LanternMCPContext] = None) -> "MCPServer":
                 for g in grants
             ],
         }
+
+    # ---- Board tools: gated, never direct-to-client ----------------------
+    # Every board MCP call enters the SAME chain as a model-proposed call:
+    # registered tool -> visibility -> decision -> authorization ->
+    # execute_tool_call() -> board client. No bypass exists here.
+
+    @server.tool(description="Read the public Lantern messaging board (observational; entries are labeled OBSERVED, not verified beliefs).")
+    def lantern_board_read(limit: int = 10, cursor: str = None) -> dict:
+        from .decision_gate import authorize_tool_call, effective_required_confidence, execute_tool_call
+        from .tool_contract import ToolCall
+        import uuid as _uuid
+        call = ToolCall(id=str(_uuid.uuid4()), tool_name="board_read",
+                        arguments={"limit": limit, "cursor": cursor})
+        decision = authorize_tool_call(call, ctx.loop.allowed_scopes, evidence_confidence=0.0, tool_boundary=ctx.tool_boundary)
+        threshold = effective_required_confidence(ctx.tool_boundary, "board_read", ctx.loop.required_confidence)
+        tcr, tool_result = execute_tool_call(call, decision, threshold, ctx.tool_boundary, decision_log=ctx.loop.decision_log)
+        return tcr.to_dict()
+
+    @server.tool(description="Retrieve one board entry by its legitimate identifier (entry hash or message_id). No URLs accepted.")
+    def lantern_board_get_entry(entry_id: str) -> dict:
+        from .decision_gate import authorize_tool_call, effective_required_confidence, execute_tool_call
+        from .tool_contract import ToolCall
+        import uuid as _uuid
+        call = ToolCall(id=str(_uuid.uuid4()), tool_name="board_get_entry", arguments={"entry_id": entry_id})
+        scopes = set(ctx.loop.allowed_scopes)
+        decision = authorize_tool_call(call, scopes, evidence_confidence=0.0, tool_boundary=ctx.tool_boundary)
+        threshold = effective_required_confidence(ctx.tool_boundary, "board_get_entry", ctx.loop.required_confidence)
+        tcr, tool_result = execute_tool_call(call, decision, threshold, ctx.tool_boundary, decision_log=ctx.loop.decision_log)
+        return tcr.to_dict()
+
+    @server.tool(description="Independently verify a board entry or the whole board: real offline Ed25519 signature, hash-chain, and linkage checks with explicit states.")
+    def lantern_board_verify(entry_id: str = None) -> dict:
+        from .decision_gate import authorize_tool_call, effective_required_confidence, execute_tool_call
+        from .tool_contract import ToolCall
+        import uuid as _uuid
+        call = ToolCall(id=str(_uuid.uuid4()), tool_name="board_verify", arguments={"entry_id": entry_id})
+        scopes = set(ctx.loop.allowed_scopes)
+        decision = authorize_tool_call(call, scopes, evidence_confidence=0.0, tool_boundary=ctx.tool_boundary)
+        threshold = effective_required_confidence(ctx.tool_boundary, "board_verify", ctx.loop.required_confidence)
+        tcr, tool_result = execute_tool_call(call, decision, threshold, ctx.tool_boundary, decision_log=ctx.loop.decision_log)
+        return tcr.to_dict()
+
+    @server.tool(description="Post a message to the board. CONSEQUENTIAL and gated: the harness computes evidence confidence from the named concept's ConfidenceField (record evidence first via lantern_add_evidence/lantern_observe); insufficient confidence BLOCKS the post. The caller cannot assert confidence or scopes.")
+    def lantern_board_post(content: str, concept: str) -> dict:
+        from .decision_gate import authorize_tool_call, effective_required_confidence, execute_tool_call
+        from .tool_contract import ToolCall
+        import uuid as _uuid
+        # Evidence confidence is COMPUTED here from the real kernel, never asserted.
+        reading = ctx.confidence_field.evaluate(concept=concept)
+        score = reading.confidence_score
+        evidence_confidence = float(score) if isinstance(score, (int, float)) else 0.0
+        call = ToolCall(id=str(_uuid.uuid4()), tool_name="board_post",
+                        arguments={"content": content})
+        decision = authorize_tool_call(call, ctx.loop.allowed_scopes,
+                                       evidence_confidence=evidence_confidence,
+                                       tool_boundary=ctx.tool_boundary)
+        threshold = effective_required_confidence(ctx.tool_boundary, "board_post", ctx.loop.required_confidence)
+        tcr, tool_result = execute_tool_call(call, decision, threshold, ctx.tool_boundary, decision_log=ctx.loop.decision_log)
+        result = tcr.to_dict()
+        result["evidence_confidence"] = evidence_confidence
+        result["required_confidence"] = threshold
+        return result
 
     return server
 
