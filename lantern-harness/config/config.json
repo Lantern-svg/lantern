@@ -7,5 +7,9 @@
   },
   "node_id": "lantern-harness-node",
   "data_dir": "memory/lantern_data",
-  "output_profile": "concise"
+  "output_profile": "concise",
+  "tool_policy": {
+    "required_confidence": 0.8,
+    "allowed_scopes": []
+  }
 }

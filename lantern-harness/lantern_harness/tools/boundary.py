@@ -18,6 +18,9 @@ class ToolDescriptor:
     description: str
     handler: Callable[..., Any]
     requires_authorization: bool = True
+    # Logical scopes this tool's execution requires (decision_gate.authorize_tool_call
+    # derives required scopes from HERE, never from model-requested scopes).
+    scopes: tuple = ()
 
 
 @dataclass
@@ -59,6 +62,11 @@ class ToolBoundary:
 
     def is_authorized(self, tool_name: str) -> bool:
         return tool_name in self._authorized
+
+    def get(self, tool_name: str):
+        """Registered descriptor for a tool, or None. Read-only; the
+        decision gate uses this to derive real scopes."""
+        return self._tools.get(tool_name)
 
     def execute(self, tool_name: str, **kwargs) -> ToolResult:
         descriptor = self._tools.get(tool_name)

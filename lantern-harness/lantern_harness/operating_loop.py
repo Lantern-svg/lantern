@@ -33,11 +33,17 @@ from typing import Any, Optional, Sequence
 
 from .bridge import LanternBridge
 from .confidence_field import ConfidenceField, ConfidenceFieldReading
+from .decision_gate import (
+    DEFAULT_REQUIRED_CONFIDENCE, authorize_tool_call, execute_tool_call, load_tool_policy,
+)
 from .decision_state_machine import DecisionStateMachine, DecisionReading
 from .perspective_differential import Perspective
 from .prompt_compiler import CompiledPrompt, PromptCompiler
 from .reality_boundary import ActionRecord, RealityBoundary
 from .spine import Branch, BranchStore
+from .tool_contract import ToolCall
+
+import uuid as _uuid
 
 
 @dataclass
@@ -90,7 +96,12 @@ class OperatingLoop:
     """Composes the existing components into one callable pipeline. Does
     not own any decision, confidence, or authorization logic itself."""
 
-    def __init__(self, bridge: LanternBridge, tool_boundary):
+    def __init__(self, bridge: LanternBridge, tool_boundary,
+                 required_confidence: float = DEFAULT_REQUIRED_CONFIDENCE,
+                 allowed_scopes=None):
+        """required_confidence and allowed_scopes come from config's
+        tool_policy section (see decision_gate.load_tool_policy) unless
+        the caller supplies session values explicitly."""
         self.bridge = bridge
         self.tool_boundary = tool_boundary
         self.compiler = PromptCompiler(bridge=bridge)
@@ -98,6 +109,9 @@ class OperatingLoop:
         self.decision_machine = DecisionStateMachine()
         self.reality_boundary = RealityBoundary()
         self.branch_store = BranchStore()
+        self.required_confidence = float(required_confidence)
+        self.allowed_scopes = set(allowed_scopes or ())
+        self.decision_log = []  # every authorize/execute decision, in order
 
     def run(
         self,
@@ -112,6 +126,7 @@ class OperatingLoop:
         tool_kwargs: Optional[dict] = None,
         open_branch: bool = False,
         previous_decision_state: Optional[str] = None,
+        validation_status: Optional[str] = None,
     ) -> LoopResult:
         if not intent or not intent.strip():
             raise ValueError("intent must be a non-empty string")
@@ -121,11 +136,16 @@ class OperatingLoop:
         observation = self.bridge.observe(intent, source=source, reliability=reliability)
         observation_id = observation.id
 
+        # validation_status is the caller-supplied INDEPENDENT VERIFICATION
+        # input (e.g. "VERIFIED" after a collective/2-node confirm). It is
+        # never self-assumed: omitting it compiles UNVERIFIED, which caps
+        # confidence below the default tool-execution threshold.
         compiled = self.compiler.compile(
             intent,
             concept=concept,
             perspectives=list(perspectives) if perspectives else None,
             assumptions=list(assumptions) if assumptions else None,
+            validation_status=validation_status,
         )
 
         reading = self.confidence_field.evaluate(
@@ -142,12 +162,38 @@ class OperatingLoop:
             proposal = self.reality_boundary.propose(
                 intent=intent, decision=decision, tool_name=tool_name, inputs=tool_kwargs or {},
             )
-            action_record = self.reality_boundary.act(proposal, self.tool_boundary, **(tool_kwargs or {}))
+            # MANDATORY DECISION GATE: no tool execution may bypass this.
+            # Confidence is the evidence-based reading measured above.
+            tool_call = ToolCall(
+                id=str(_uuid.uuid4()),
+                tool_name=tool_name,
+                arguments=dict(tool_kwargs or {}),
+            )
+            evidence_conf = reading.confidence_score
+            if not isinstance(evidence_conf, (int, float)):
+                evidence_conf = 0.0  # "BLOCKED" or non-numeric readings block execution
+            decision_result = authorize_tool_call(
+                tool_call, self.allowed_scopes,
+                evidence_confidence=float(evidence_conf),
+                tool_boundary=self.tool_boundary,
+            )
+            tool_call_result, tool_result = execute_tool_call(
+                tool_call, decision_result, self.required_confidence,
+                self.tool_boundary, decision_log=self.decision_log,
+            )
+            action_record = self.reality_boundary.record_result(proposal, tool_result, decision=decision_result)
             if not action_record.is_real_success():
-                notes.append(
-                    f"action did not produce a real success (execution_mode={action_record.execution_mode}, "
-                    f"result_status={action_record.result_status}) -- treat as unresolved, not as a completed step"
-                )
+                if tool_result is not None and getattr(tool_result, "status", None) == "BLOCKED":
+                    notes.append(
+                        f"action BLOCKED by the mandatory decision gate (state={decision_result.state}, "
+                        f"confidence={decision_result.confidence:.2f}, required={self.required_confidence:.2f}) -- "
+                        "the tool was not executed"
+                    )
+                else:
+                    notes.append(
+                        f"action did not produce a real success (execution_mode={action_record.execution_mode}, "
+                        f"result_status={action_record.result_status}) -- treat as unresolved, not as a completed step"
+                    )
 
         branch = None
         if open_branch:

@@ -50,15 +50,20 @@ def test_run_with_unauthorized_tool_never_reports_real_success():
     assert result.action_record.authorization_status == 'DENIED'
 
 
-def test_run_with_authorized_tool_produces_real_result():
+def test_run_with_authorized_tool_now_gated_by_mandatory_decision():
+    """Updated 2026-10-04 for the decision gate: an authorized tool with
+    LOW evidence confidence is BLOCKED (previously it executed -- the
+    advisory-decision defect). Positive execution coverage lives in
+    tests/test_decision_gate.py."""
     bridge = _fresh_bridge('auth-tool')
     tb = ToolBoundary()
     tb.register(ToolDescriptor(name='echo', description='echo', handler=lambda msg: msg))
     tb.authorize('echo')
-    loop = OperatingLoop(bridge, tb)
+    loop = OperatingLoop(bridge, tb, allowed_scopes={'tool:echo'})
     result = loop.run('say hi', concept='greeting', tool_name='echo', tool_kwargs={'msg': 'hi'})
-    assert result.action_record.is_real_success() is True
-    assert result.action_record.result == 'hi'
+    assert result.action_record.is_real_success() is False
+    assert result.action_record.result_status == 'NOT_EXECUTED'
+    assert any('BLOCKED' in n for n in result.notes)
 
 
 def test_run_produces_confidence_and_decision_for_every_call():

@@ -124,10 +124,47 @@ class RealityBoundary:
             inputs=dict(inputs or {}),
         )
 
+    def record_result(self, proposal: ActionProposal, tool_result, decision=None) -> ActionRecord:
+        """Build the honest ActionRecord for a tool call that has ALREADY
+        been decided and (if allowed) executed by the decision gate
+        (lantern_harness.decision_gate.execute_tool_call). This method
+        never executes anything -- it records what the gate did."""
+        if tool_result is None:
+            return ActionRecord(proposal=proposal, authorization_status="NOT_REQUESTED",
+                                execution_mode=EXECUTION_MODE_NOT_EXECUTED, result_status=RESULT_NOT_EXECUTED,
+                                notes=("no tool result supplied; nothing was executed",))
+        status = getattr(tool_result, "status", "ERROR")
+        if status == "EXECUTED":
+            notes = ()
+            if decision is not None:
+                notes = (f"decision: state={decision.state} confidence={decision.confidence:.2f}",)
+            return ActionRecord(proposal=proposal, authorization_status="AUTHORIZED",
+                                execution_mode=EXECUTION_MODE_REAL, result_status=RESULT_SUCCESS,
+                                result=getattr(tool_result, "output", None), notes=notes)
+        if status == "BLOCKED":
+            # Scope-denied decisions never reached ToolBoundary; confidence-gated
+            # ones did pass scope authorization. Record which stage blocked it.
+            auth_status = "AUTHORIZED" if (decision is not None and decision.state == "Allowed") else "DENIED"
+            return ActionRecord(proposal=proposal, authorization_status=auth_status,
+                                execution_mode=EXECUTION_MODE_NOT_EXECUTED, result_status="NOT_EXECUTED",
+                                error=getattr(tool_result, "error", None),
+                                notes=("BLOCKED by the decision gate -- mandatory decision/confidence check did not allow execution",))
+        if status == "DENIED":
+            return ActionRecord(proposal=proposal, authorization_status="DENIED",
+                                execution_mode=EXECUTION_MODE_NOT_EXECUTED, result_status=RESULT_DENIED,
+                                notes=("tool %r is not authorized in ToolBoundary" % proposal.tool_name,))
+        return ActionRecord(proposal=proposal, authorization_status="AUTHORIZED",
+                            execution_mode=EXECUTION_MODE_REAL, result_status=RESULT_ERROR,
+                            error=getattr(tool_result, "error", None))
+
     def act(self, proposal: ActionProposal, tool_boundary, **kwargs) -> ActionRecord:
-        """Attempt the real action through the caller's ToolBoundary.
-        Requires an explicit, already-authorized tool_name on the
-        proposal -- this method never authorizes anything itself."""
+        """DEPRECATED for production use: this method executes a tool
+        WITHOUT the mandatory decision gate and therefore must not be
+        used for model-proposed or loop-driven tool calls. Production
+        tool execution goes through
+        lantern_harness.decision_gate.execute_tool_call(), which
+        composes with record_result(). Kept only for direct,
+        operator-scripted use and existing tests."""
         if proposal.tool_name is None:
             return ActionRecord(
                 proposal=proposal,

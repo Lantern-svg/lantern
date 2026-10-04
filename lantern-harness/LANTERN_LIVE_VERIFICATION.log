@@ -1,0 +1,188 @@
+==============================================================================
+LANTERN HARNESS — LIVE END-TO-END VERIFICATION RUN
+==============================================================================
+
+--- PHASE 0: real bootstrap (no mocking, real directories) ---
+🌱 LANTERN HARNESS
+
+First launch detected. Checking:
+✓ Python
+✓ Lantern
+✓ Identity
+✓ Memory
+✗ Reasoning Engine
+✓ Tool Boundary
+
+Lantern: v0.84
+Reasoning Engine: NOT_CONFIGURED
+Identity: READY
+Memory: READY
+Tools: 0 configured
+----------------------------
+Lantern is ready.
+engine is None: True; checks contain reasoning_engine: True
+REASONING_ENGINE: NOT_CONFIGURED — no fabricated response possible (fail-closed observed)
+
+### ITEM 0a (model failure path): VERIFIED | no provider configured -> NOT_CONFIGURED, no fabricated response
+
+
+--- ITEM 1: /run end-to-end (REPL path, no tool) ---
+OPERATING LOOP RESULT
+intent: verify that the harness executes its loop
+observation_id: 5d4b4d0f-7b77-4eca-9e3e-fd0fc57864cc
+confidence: score=0.092 band=LOW
+decision: state=LOW action=BRANCH / INVESTIGATE
+action: NOT_ATTEMPTED (no tool_name supplied)
+
+### ITEM 1a (/run REPL path): VERIFIED | loop produced a full result
+
+
+--- ITEM 1b: /run full path WITH real external action (script path, real tool) ---
+registered tool append_local_note (scopes local_file_modification); authorized=True
+gated loop: required_confidence=0.8, allowed_scopes={'local_file_modification'}
+OPERATING LOOP RESULT
+intent: Append a live-verification marker line to the local target file
+observation_id: 5d5f7eec-e12a-4f1d-899f-2cdd4e9453d3
+confidence: score=0.85 band=MEDIUM
+decision: state=MEDIUM action=PRESERVE / GATHER
+action: execution_mode=REAL result_status=SUCCESS real_success=True
+file content after run: 'pre-run state\nlive-run 1791145554\n'
+action_record: mode=REAL status=SUCCESS real_success=True
+
+### ITEM 1b (/run -> Bridge -> Loop -> PermissionBoundary gate -> RealityBoundary -> tool -> file): VERIFIED | file changed on disk: True
+
+
+--- ITEM 1b2: the closed defect -- authorized tool + LOW confidence must BLOCK ---
+OPERATING LOOP RESULT
+intent: Append a marker line WITHOUT verification evidence
+observation_id: cf23edcf-ab58-46f5-8417-031d20fde8de
+confidence: score=0.0 band=LOW
+decision: state=LOW action=BRANCH / INVESTIGATE
+action: execution_mode=NOT_EXECUTED result_status=NOT_EXECUTED real_success=False
+note: action BLOCKED by the mandatory decision gate (state=Allowed, confidence=0.00, required=0.80) -- the tool was not executed
+file unchanged by low-confidence run: True
+
+### ITEM 1b2 (LOW confidence + authorized tool BLOCKED by the gate): VERIFIED 
+
+
+--- ITEM 1c: /run with an UNAUTHORIZED tool must NOT execute ---
+OPERATING LOOP RESULT
+intent: Try to run the unauthorized tool
+observation_id: 5a3309aa-3df1-4962-b72c-a9fa34842900
+confidence: score=0.0 band=LOW
+decision: state=LOW action=BRANCH / INVESTIGATE
+action: execution_mode=NOT_EXECUTED result_status=NOT_EXECUTED real_success=False
+note: action BLOCKED by the mandatory decision gate (state=Denied, confidence=0.00, required=0.80) -- the tool was not executed
+file unchanged by negative control: True
+
+### ITEM 1c (unauthorized tool blocked): VERIFIED | action result_status=NOT_EXECUTED
+
+
+--- ITEM 2: /self live ---
+SELF-MODEL
+
+WHAT I KNOW:
+  - node identity status=READY
+  - Chronicle integrity=VALID
+  - memory: step=53, observations=53, evidence=12, contradictions=5
+
+WHAT I INFER:
+  - presence of 5 contradiction(s) suggests at least one concept has conflicting evidence -- which concept(s) is not inferred here, read EvidenceKernel directly
+
+WHAT I DO NOT KNOW:
+  - whether any reasoning engine response was independently verified as true (only that it was returned)
+  - whether any external user has adopted, paid for, or benefited from this system (no such record exists)
+  - anything about conditions outside the data this bridge has actually observed
+
+WHAT I CAN DO:
+  - observe (record an Observation into the real EvidenceKernel)
+  - add_evidence (link Evidence to a concept, real EvidenceKernel)
+  - detect and read contradictions (real EvidenceKernel.detect_contradiction)
+  - resolve contradictions (real EvidenceKernel resolution path)
+  - compute belief (real EvidenceKernel.belief sigmoid scoring)
+  - compile a structured prompt (PromptCompiler)
+  - compare independent perspectives (PerspectiveDifferentialEngine, variance only, no voting)
+  - compute a read-only confidence reading (ConfidenceField)
+  - recommend (not authorize) a decision state (DecisionStateMachine)
+  - open/link/abandon exploratory branches (spine.BranchStore)
+  - commit a branch into the Spine, only with explicit external authorization (spine.SpineCommitter)
+  - record real vs. simulated external actions (RealityBoundar
+... (truncated for transcript)
+
+### ITEM 2 (/self): VERIFIED | self-model inspection returned live runtime state
+
+
+--- ITEM 3: PermissionAuthority live — allowed / disallowed / ambiguous ---
+[granted] capability='run_tests' scope='pytest suite for lantern-harness' granted_by='operator-mikhail' version=1
+3a result=ACT authorized=True
+
+### ITEM 3a (allowed -> ACT): VERIFIED 
+
+3b result=REFUSE authorized=False notes=("capability 'destructive_system_operation' is an external-authority category and is never implied by any other grant, even a superficially similar one (directive section 8)",)
+
+### ITEM 3b (disallowed -> REFUSE): VERIFIED 
+
+[granted] capability='external_communication' scope='status posts to the wall' granted_by='operator-mikhail' version=2
+3b2 result=ASK_OPERATOR authorized=False
+never-inherits note present: True
+
+### ITEM 3b2 (lookalike capability NOT inherited): VERIFIED 
+
+3c result=STOP_AND_REASSESS authorized=True
+
+### ITEM 3c (ambiguous -> STOP_AND_REASSESS): VERIFIED 
+
+
+--- bonus: grants cannot be created without an explicit granting authority ---
+grant refused: granting_authority must be a non-empty, explicit string (e.g. the operator's identifier)
+
+### ITEM 3d (self-grant refused): VERIFIED 
+
+
+--- ITEM 4: RealityBoundary — claims vs evidence, live ---
+claim alone (w=0.3, sign+): score=0.0 band=LOW evidence_strength=0.085
+claim + independent verification (w=1.0, sign+): score=0.631 band=MEDIUM evidence_strength=1.0 contradiction_pressure=0.0
+with contradiction (w=0.8, sign-): score=0.321 band=MEDIUM contradiction_pressure=0.461
+kernel contradiction record: Contradiction(concept='claims_vs_evidence_live_1791145554', evidence_snapshot=('6461a5ae-68d7-4582-a2a5-6b83fe371f2c', 'ab1cc17e-9bab-446d-b93c-23dc40fd6f90', 'e506d597-5b06-4f63-84f4-973741133315'), historical_severity=0.8, current_severity=0.8, created_step=58, owner_instance='', id='c589a95b-3415-4439-b633-79a985f13d3c', status='OPEN', resolution_id=None, supersedes=None, superseded_by=None)
+
+### ITEM 4a (claims vs evidence: weights/signs change live readings, contradiction detected): VERIFIED 
+
+simulate: execution_mode=SIMULATED result_status=SIMULATED_ONLY is_real_success=False
+file untouched by simulation: True
+act:      execution_mode=REAL result_status=SUCCESS is_real_success=True
+file contains executed marker: True
+
+### ITEM 4b (simulate != act: hypothetical marked simulated, real marked real): VERIFIED 
+
+downstream exposure (LoopResult.to_dict keys): ['action_record', 'branch', 'compiled_prompt', 'confidence', 'decision', 'intent', 'notes', 'observation_id']
+action_record exposure: {"proposal": {"intent": "Append a live-verification marker line to the local target file", "decision_state": "MEDIUM", "decision_action": "PRESERVE / GATHER", "authorization_required": true, "tool_name": "append_local_note", "inputs": {"text": "live-run 1791145554"}}, "authorization_status": "AUTHOR
+
+### ITEM 4c (separation exposed downstream in structures): VERIFIED 
+
+
+--- bonus: /spine REPL cannot authorize a commit ---
+SPINE_NOT_COMMITTED: this REPL command intentionally cannot authorize a commit on your behalf. A branch cannot commit itself and no confidence score alone may create commitment (see lantern_harness.spine.SpineCommitter.commit's required authorized=True parameter). Use SpineCommitter directly from a script where you, the operator, explicitly pass authorized=True.
+
+### ITEM 5 (/spine refuses self-authorization): VERIFIED 
+
+
+==============================================================================
+VERIFICATION SUMMARY
+==============================================================================
+  [VERIFIED    ] 0a  reasoning model absent -> NOT_CONFIGURED (fail-closed)
+  [VERIFIED    ] 1a  /run REPL end-to-end (observe->compile->confidence->decision)
+  [VERIFIED    ] 1b  /run full path with real authorized tool + real file change
+  [VERIFIED    ] 1c  /run with unauthorized tool -> blocked, file unchanged
+  [VERIFIED    ] 1b2 authorized tool + LOW confidence -> BLOCKED (defect closed)
+  [VERIFIED    ] 2   /self live self-inspection
+  [VERIFIED    ] 3a  PermissionAuthority: allowed -> ACT
+  [VERIFIED    ] 3b  PermissionAuthority: disallowed -> REFUSE
+  [VERIFIED    ] 3b2 NEVER_INHERITS: lookalike grant does not imply credential_use
+  [VERIFIED    ] 3c  PermissionAuthority: ambiguous -> STOP_AND_REASSESS
+  [VERIFIED    ] 3d  self-grant refused (no cell authorizes itself)
+  [VERIFIED    ] 4a  claims vs evidence: reliability weighting separates them
+  [VERIFIED    ] 4b  simulate (claim) vs act (evidence), live file proof
+  [VERIFIED    ] 4c  separation exposed downstream in ActionRecord/LoopResult
+  [VERIFIED    ] 5   /spine refuses self-authorized commitment
+
+15/15 items VERIFIED in 0.0s, all via real executed components

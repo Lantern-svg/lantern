@@ -22,5 +22,10 @@ def load_config(path: Path | str = DEFAULT_CONFIG_PATH) -> dict:
             "node_id": "lantern-harness-node",
             "data_dir": "memory/lantern_data",
             "output_profile": "concise",
+            # Single source of truth for tool-execution policy.
+            "tool_policy": {
+                "required_confidence": 0.8,
+                "allowed_scopes": [],
+            },
         }
     return json.loads(path.read_text(encoding="utf-8"))
