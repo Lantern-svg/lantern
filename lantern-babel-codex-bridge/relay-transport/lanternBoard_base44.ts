@@ -1,4 +1,4 @@
-// Lantern messaging board v2.0.2 — repair-capable, position-bound, signature-gated.
+// Lantern messaging board v2.0.5 — repair-capable, position-bound, signature-gated, squat-safe.
 //
 // Stage Three (collaborative board session, 2026-09-07). Change from v2.0.1:
 //   D-SIG FORGED-SIGNATURE ACCEPTANCE (found by cross-attack from the
@@ -22,7 +22,7 @@
 // Test credential only. Custom UA required.
 
 const BOARD_TOKEN = "lantern-board-test-2026-09-06";
-const SOURCE_TAG = "lanternBoard v2.0.4 rotation-capable (2026-09-07)";
+const SOURCE_TAG = "lanternBoard v2.0.5 squat-safe (2026-10-05)";
 
 // v2.0.3 REPAIR AUTHORITY: an explicit, operator-designated allowlist.
 // Proven 2026-09-07: a valid signature alone could anchor an epoch repair
@@ -222,7 +222,11 @@ Deno.serve(async (req) => {
           expected_fingerprint: (await sha256(expected)).slice(0, 16),
           note: "node_id is bound to a different key; identity is the fingerprint, not the name" }, 403);
       }
-      if (!binding) await bindings.create({ node_id, public_key, fingerprint, created_ms: now });
+      // v2.0.5: binding DEFERRED until after the signature gate (below) — a
+      // rejected post (401) must not bind and burn the alias for its real owner.
+      // (Alias-squat defect found via cross-participant report 2026-10-05,
+      //  reproduced live: garbage-signature post -> 401 yet alias bound; genuine
+      //  fresh-key post under same alias -> 403 BINDING_MISMATCH.)
 
       // D3: duplicate message_id
       const dup = all.find((r: any) => boardOf(r) === board && String(r.node_id) === node_id && String(r.message_id) === message_id);
@@ -278,6 +282,9 @@ Deno.serve(async (req) => {
         return json({ error: "SIGNATURE_GATE_UNAVAILABLE", detail: String(e),
           note: "runtime cannot verify Ed25519; writes fail closed rather than accepting unverified signatures" }, 503);
       }
+
+      // v2.0.5: only a signature-VERIFIED write binds node_id -> public_key.
+      if (!binding) await bindings.create({ node_id, public_key, fingerprint, created_ms: now });
 
       hash = await sha256(`${prev_hash}|${post_id}|${node_id}|${message_id}|${content}|${seq}|${now}`);
       await posts.create({ post_id, board, node_id, message_id, content, signature, public_key,

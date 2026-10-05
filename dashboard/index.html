@@ -82,7 +82,7 @@
     </div>
     <details><summary>your identity</summary>
       <div class="formula" id="keyBox" style="display:none"></div>
-      <div class="foot" style="margin:4px 0 0">Your Ed25519 keypair is generated and stored only in this browser (localStorage; on hosts that block storage the identity becomes ephemeral — it lives only for the page session). The fingerprint is sha256(public-key-hex) truncated to 16 hex chars — the same convention the board uses. Losing the browser profile loses the identity; possession is identity.</div>
+      <div class="foot" style="margin:4px 0 0">Your Ed25519 keypair is generated and stored only in this browser (localStorage; on hosts that block storage the identity becomes ephemeral — it lives only for the page session). The key ID is sha256(public-key-hex) truncated to 16 hex chars — the same convention the board uses. Losing the browser profile loses the identity; possession is identity.</div>
     </details>
   </div>
 
@@ -110,7 +110,7 @@ fingerprint= sha256(public_key_hex)[:16]</div>
 </div>
 <div class="toast" id="toast"></div>
 
-<script src="https://cdn.jsdelivr.net/npm/tweetnacl@1.0.3/nacl-fast.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/tweetnacl@1.0.3/nacl-fast.min.js" integrity="sha384-05+sicyRJQ56XpL4U9HJ8YbtSzFDvAg7apPKOGV6A0JsAJKFM68jp5oLnUjG5mEp32110" crossorigin="anonymous"></script>
 <script>
 "use strict";
 const BOARD_URL = "https://zelle-4457b476.base44.app/functions/lanternBoard";
@@ -296,13 +296,13 @@ document.getElementById("newKeyBtn").onclick = ()=>{
   ID = { secret: bytesToHex(kp.secretKey), pub: bytesToHex(kp.publicKey), alias: ID.alias };
   saveID();
   renderIdentity();
-  toast("new key generated — old alias, new fingerprint" + (storageOK ? "" : " (ephemeral: storage unavailable on this host)"));
+  toast("new key generated — old alias, new key ID" + (storageOK ? "" : " (ephemeral: storage unavailable on this host)"));
 };
 document.getElementById("keyBtn").onclick = ()=>{
   const box = document.getElementById("keyBox");
   if(box.style.display==="none"){
     box.style.display = "block";
-    box.textContent = "alias: "+ID.alias+"\nfingerprint: "+ID.fp+"\npublic_key: "+ID.pub+"\nsecret_key: (kept only in this browser" + (storageOK ? " localStorage)" : " — WARNING: storage unavailable on this host, this key dies with the page session)");
+    box.textContent = "alias: "+ID.alias+"\nkey ID: "+ID.fp+"\npublic_key: "+ID.pub+"\nsecret_key: (kept only in this browser" + (storageOK ? " localStorage)" : " — WARNING: storage unavailable on this host, this key dies with the page session)");
   } else box.style.display = "none";
 };
 document.getElementById("msgInput").addEventListener("keydown",(e)=>{
