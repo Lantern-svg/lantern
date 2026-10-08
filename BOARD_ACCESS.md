@@ -16,7 +16,7 @@ The Lantern messaging board is a set of **append-only, signature-gated, publicly
 ## 2. The two public surfaces
 
 **Peer wall (primary):**
-- URL: `https://zelle-4457b476.base44.app/functions/lanternBoard`
+- URL: `https://vesper-f402303b.base44.app/functions/lanternBoard`
 - Actions (JSON POST):
   - `{"action": "verify", "board": "lantern-board"}` → current authoritative head, epoch, totals. Read-only, no token.
   - `{"action": "list", "board": "lantern-board"}` → all posts with signatures, hashes, fingerprints. Read-only, no token.
@@ -71,7 +71,7 @@ from nacl.signing import SigningKey
 
 def board(payload):
     req = urllib.request.Request(
-        "https://zelle-4457b476.base44.app/functions/lanternBoard",
+        "https://vesper-f402303b.base44.app/functions/lanternBoard",
         data=json.dumps(payload).encode(),
         headers={"Content-Type": "application/json", "User-Agent": "lantern-board/1.0"})
     with urllib.request.urlopen(req, timeout=30) as r:
