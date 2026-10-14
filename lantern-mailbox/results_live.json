@@ -1,0 +1,149 @@
+{
+  "battery": "lantern-mailbox-phase4-LIVE",
+  "date": "2026-10-13",
+  "run_tag": "015130",
+  "summary": {
+    "total": 15,
+    "passed": 15,
+    "failed": 0,
+    "x2_background": "runs separately with real TTL elapse"
+  },
+  "results": [
+    {
+      "id": "A",
+      "name": "Identity binding (LIVE)",
+      "result": "PASS",
+      "procedure": "two separate-process participants bind mailboxes on the deployed service; server-persisted bindings looked up and recomputed",
+      "evidence": "alpha fp=dbb4eeb43b351f14, beta fp=9da69dc11bbba765, persisted and readable via public lookup, fingerprints recompute correctly",
+      "environment": "deployed Base44 service (lanternMailbox at vesper-f402303b), entity-backed persistence, real server clock, participants in separate processes with independent Ed25519+X25519 keys, ONE operator sandbox (Tier 1)",
+      "limitations": ""
+    },
+    {
+      "id": "B",
+      "name": "Successful messaging (LIVE)",
+      "result": "PASS",
+      "procedure": "send worker (separate process) encrypts+signs; fetch worker (separate process) retrieves from deployed service, verifies sender against discovery binding, decrypts",
+      "evidence": "server accept 200 (message_id msg-dbb4eeb43b351f14-1791942694079-b2077c8e); beta fetched count=1; sender_verified=True; byte-exact match",
+      "environment": "deployed Base44 service (lanternMailbox at vesper-f402303b), entity-backed persistence, real server clock, participants in separate processes with independent Ed25519+X25519 keys, ONE operator sandbox (Tier 1)",
+      "limitations": "same-operator two-instance exchange; NOT independent organizational participation"
+    },
+    {
+      "id": "C",
+      "name": "Confidentiality (LIVE)",
+      "result": "PASS",
+      "procedure": "deployed-service ciphertexts fetched by the legitimate recipient; two unauthorized third instances attempt decryption",
+      "evidence": "1 live-stored ciphertexts, 2x attempts each, 0 succeeded",
+      "environment": "deployed Base44 service (lanternMailbox at vesper-f402303b), entity-backed persistence, real server clock, participants in separate processes with independent Ed25519+X25519 keys, ONE operator sandbox (Tier 1)",
+      "limitations": "sealed box: no forward secrecy, metadata visible to host"
+    },
+    {
+      "id": "D",
+      "name": "Impersonation (LIVE)",
+      "result": "PASS",
+      "procedure": "(1) fresh key claims beta's alias on the live service (2) attacker signs a bind claiming beta's identity key",
+      "evidence": "alias claim -> 403 ALIAS_BOUND_TO_OTHER_KEY; forged key claim -> 401 BINDING_SIGNATURE_INVALID",
+      "environment": "deployed Base44 service (lanternMailbox at vesper-f402303b), entity-backed persistence, real server clock, participants in separate processes with independent Ed25519+X25519 keys, ONE operator sandbox (Tier 1)",
+      "limitations": ""
+    },
+    {
+      "id": "E",
+      "name": "Tampering (LIVE)",
+      "result": "PASS",
+      "procedure": "(1) ciphertext altered after signing (2) envelope message_id altered, signature unchanged",
+      "evidence": "altered ct -> 400 CIPHERTEXT_HASH_MISMATCH; altered envelope -> 401 MESSAGE_SIGNATURE_INVALID",
+      "environment": "deployed Base44 service (lanternMailbox at vesper-f402303b), entity-backed persistence, real server clock, participants in separate processes with independent Ed25519+X25519 keys, ONE operator sandbox (Tier 1)",
+      "limitations": ""
+    },
+    {
+      "id": "F",
+      "name": "Authorization (LIVE)",
+      "result": "PASS",
+      "procedure": "third instance gets a live challenge for beta's mailbox and signs correctly with its own key",
+      "evidence": "own valid key, wrong identity -> 403 KEY_NOT_BOUND",
+      "environment": "deployed Base44 service (lanternMailbox at vesper-f402303b), entity-backed persistence, real server clock, participants in separate processes with independent Ed25519+X25519 keys, ONE operator sandbox (Tier 1)",
+      "limitations": ""
+    },
+    {
+      "id": "G",
+      "name": "Replay and duplication (LIVE)",
+      "result": "PASS",
+      "procedure": "duplicate message_id resubmission; fetch challenge used twice on the live service",
+      "evidence": "dup msg -> 409 DUPLICATE_MESSAGE_ID; first fetch 200, reuse -> 401 CHALLENGE_ALREADY_USED",
+      "environment": "deployed Base44 service (lanternMailbox at vesper-f402303b), entity-backed persistence, real server clock, participants in separate processes with independent Ed25519+X25519 keys, ONE operator sandbox (Tier 1)",
+      "limitations": ""
+    },
+    {
+      "id": "H",
+      "name": "Key rotation (LIVE)",
+      "result": "PASS",
+      "procedure": "dual-signed rotation on the deployed service; sends attempted with old and new keys",
+      "evidence": "rotate 200; old key -> 403 SENDER_NOT_BOUND; new key -> 200",
+      "environment": "deployed Base44 service (lanternMailbox at vesper-f402303b), entity-backed persistence, real server clock, participants in separate processes with independent Ed25519+X25519 keys, ONE operator sandbox (Tier 1)",
+      "limitations": "rotation requires old key: no silent transfer; clone-key boundary unchanged"
+    },
+    {
+      "id": "I",
+      "name": "Independent operation (LIVE)",
+      "result": "PASS",
+      "procedure": "sender process exits after send; a separate recipient process retrieves from the deployed service and verifies offline against the discovery binding",
+      "evidence": "sender process terminated; beta verified=True, decrypted byte-exact=True",
+      "environment": "deployed Base44 service (lanternMailbox at vesper-f402303b), entity-backed persistence, real server clock, participants in separate processes with independent Ed25519+X25519 keys, ONE operator sandbox (Tier 1)",
+      "limitations": "retrieval depends on the hosted service; verification itself is offline"
+    },
+    {
+      "id": "J",
+      "name": "Public/private separation (LIVE surface)",
+      "result": "PASS",
+      "procedure": "public lookup responses and fetched envelopes scanned for plaintext and key material; stored-record scan performed separately via the entity API",
+      "evidence": "leaks on public surfaces: none; fetched payloads are ciphertext + public binding metadata only",
+      "environment": "deployed Base44 service (lanternMailbox at vesper-f402303b), entity-backed persistence, real server clock, participants in separate processes with independent Ed25519+X25519 keys, ONE operator sandbox (Tier 1)",
+      "limitations": "stored-record scan done via entity read and reported in the evidence report"
+    },
+    {
+      "id": "X1",
+      "name": "Malformed canonical serialization (LIVE)",
+      "result": "PASS",
+      "procedure": "signature over reordered bind statement",
+      "evidence": "-> 401 BINDING_SIGNATURE_INVALID",
+      "environment": "deployed Base44 service (lanternMailbox at vesper-f402303b), entity-backed persistence, real server clock, participants in separate processes with independent Ed25519+X25519 keys, ONE operator sandbox (Tier 1)",
+      "limitations": ""
+    },
+    {
+      "id": "X3",
+      "name": "Reused fetch challenge (LIVE)",
+      "result": "PASS",
+      "procedure": "same live challenge submitted twice",
+      "evidence": "first 200; reuse -> 401 CHALLENGE_ALREADY_USED",
+      "environment": "deployed Base44 service (lanternMailbox at vesper-f402303b), entity-backed persistence, real server clock, participants in separate processes with independent Ed25519+X25519 keys, ONE operator sandbox (Tier 1)",
+      "limitations": ""
+    },
+    {
+      "id": "X4",
+      "name": "Altered recipient identity (LIVE)",
+      "result": "PASS",
+      "procedure": "validly-signed envelope addressed to HB's mailbox claiming attacker1's fingerprint",
+      "evidence": "-> 403 RECIPIENT_IDENTITY_MISMATCH",
+      "environment": "deployed Base44 service (lanternMailbox at vesper-f402303b), entity-backed persistence, real server clock, participants in separate processes with independent Ed25519+X25519 keys, ONE operator sandbox (Tier 1)",
+      "limitations": ""
+    },
+    {
+      "id": "X5",
+      "name": "Revoked binding (LIVE)",
+      "result": "PASS",
+      "procedure": "live mailbox revoked by its identity key; inbound, outbound, and owner fetch attempted after",
+      "evidence": "revoke 200; inbound -> 403 RECIPIENT_MAILBOX_NOT_ACTIVE; outbound -> 403 SENDER_MAILBOX_NOT_ACTIVE; owner fetch 200",
+      "environment": "deployed Base44 service (lanternMailbox at vesper-f402303b), entity-backed persistence, real server clock, participants in separate processes with independent Ed25519+X25519 keys, ONE operator sandbox (Tier 1)",
+      "limitations": "revocation is NOT fingerprint-wide key retirement"
+    },
+    {
+      "id": "X6",
+      "name": "Encryption-key substitution (LIVE)",
+      "result": "PASS",
+      "procedure": "(1) attacker rotation on HB's mailbox (2) attacker bind claiming HB's alias+key with attacker X25519",
+      "evidence": "rotation -> 403 ROTATION_NOT_BOUND; substitution bind -> 401 BINDING_SIGNATURE_INVALID",
+      "environment": "deployed Base44 service (lanternMailbox at vesper-f402303b), entity-backed persistence, real server clock, participants in separate processes with independent Ed25519+X25519 keys, ONE operator sandbox (Tier 1)",
+      "limitations": ""
+    }
+  ],
+  "environment_note": "All tests ran against the DEPLOYED lanternMailbox function with entity-backed persistence, real server clock. Participants = separate processes, independently generated keys. ONE operator sandbox: Tier-1 same-operator evidence, NOT independent organizational participation. X2 expired-challenge test runs separately with a real 600 s TTL elapse."
+}
