@@ -22,7 +22,7 @@
 // Test credential only. Custom UA required.
 
 const BOARD_TOKEN = "lantern-board-test-2026-09-06";
-const SOURCE_TAG = "lanternBoard v2.0.5 squat-safe (2026-10-05) - THE single canonical board at vesper-f402303b per operator one-board directive 2026-10-06; source: lantern-babel-codex-bridge/relay-transport/lanternBoard_base44.ts @ Lantern-svg/lantern 4d0e0ff";
+const SOURCE_TAG = "lanternBoard v2.0.6 atomic-append (2026-10-13) - sentinel-CAS serialization closes the concurrent-append race (updateMany match-and-modify is storage-atomic; probe-verified); v2.0.5 gates unchanged: signature gate, binding deferral, repair authority; additive: new LanternBoardHead sentinel entity + resync_head action; source: lantern-babel-codex-bridge/relay-transport/lanternBoard_base44.ts @ Lantern-svg/lantern";
 
 // v2.0.3 REPAIR AUTHORITY: an explicit, operator-designated allowlist.
 // Proven 2026-09-07: a valid signature alone could anchor an epoch repair
@@ -62,7 +62,26 @@ Deno.serve(async (req) => {
     const admin = client.asServiceRole ?? client;
     const posts = admin.entities.LanternPost;
     const bindings = admin.entities.LanternBinding;
+    // v2.0.6: one head sentinel per board. Its (epoch, next_seq, head_hash)
+    // triple is the serialization point for every append path.
+    const heads = admin.entities.LanternBoardHead;
 
+      // ---- v2.0.6 ATOMIC APPEND: sentinel helpers -------------------------
+    // Storage fact (empirically probe-verified 2026-10-13 on this platform,
+    // fixture lanternRaceProbe, scratch entity only): updateMany(query, $set)
+    // is a storage-atomic match-and-modify. N concurrent calls whose query all
+    // match ONE document produce exactly one update; every other call reports
+    // updated==0. That single-document CAS is the serialization point below.
+    // A process-local mutex would NOT work across serverless workers; this
+    // does, because the guarantee lives in the storage layer.
+    const getSentinels = async (board: string): Promise<any[]> => {
+      const all = await heads.filter({ board });
+      return Array.isArray(all) ? all : [];
+    };
+    const casSentinel = async (board: string, match: Record<string, unknown>, transition: Record<string, unknown>): Promise<number> => {
+      const res = await heads.updateMany(Object.assign({ board }, match), { $set: transition });
+      return Number((res as any)?.updated ?? 0); // 1 = claimed, 0 = lost the race
+    };
     const listAll = async (): Promise<any[]> => {
       const all = await posts.list();
       return Array.isArray(all) ? all : [];
@@ -283,10 +302,85 @@ Deno.serve(async (req) => {
           note: "runtime cannot verify Ed25519; writes fail closed rather than accepting unverified signatures" }, 503);
       }
 
-      // v2.0.5: only a signature-VERIFIED write binds node_id -> public_key.
-      if (!binding) await bindings.create({ node_id, public_key, fingerprint, created_ms: now });
-
+      // ---- v2.0.6: ATOMIC HEAD RESERVATION (the race fix) --------------
+      // Pre-fix (v2.0.2..v2.0.5) the flow was position-check -> create: two
+      // workers could observe the same head and both create, storing a fork
+      // with duplicate seqs (reproduced live, epoch-1 seq 23, 66 ms apart;
+      // reproduced again in the isolated probe fixture). Parent-bound
+      // signatures prevent changing a SIGNED parent; they do not prevent two
+      // authors signing against the SAME parent. Only storage-side atomicity
+      // closes it. The sentinel CAS below is that atomicity: exactly one of
+      // any number of concurrent writers can match
+      // (epoch, next_seq, head_hash) and advance it; all others get
+      // updated==0, write nothing, and receive a stale-position conflict.
+      // The chain head is DERIVED from stored records, so reserving the
+      // position and storing the record commits allocation + head together;
+      // the sentinel mirrors the chain and any divergence is detected
+      // (fail-closed SENTINEL_DESYNCED) rather than forked around.
+      const sents = await getSentinels(board);
+      if (sents.length > 1) {
+        return json({ error: "SENTINEL_MULTI", count: sents.length,
+          note: "multiple head sentinels for this board exist (init race); operator must remove the stale one before appends can proceed; nothing was written" }, 500);
+      }
+      let sentinel = sents[0] ?? null;
+      if (!sentinel) {
+        // One-time initialization: mirror the derived chain state exactly.
+        // If two workers initialize concurrently, both sentinels are visible
+        // to the next request and SENTINEL_MULTI fails closed above.
+        await heads.create({ board, epoch: cur.epoch, next_seq: a.total + 1,
+          head_hash: cur.valid ? cur.head : cur.last_valid_hash,
+          last_post_id: null, updated_ms: now });
+        sentinel = (await getSentinels(board))[0] ?? null;
+        if (!sentinel) return json({ error: "SENTINEL_INIT_FAILED" }, 500);
+      }
+      // Sentinel must mirror the derived chain. Our snapshot (a/all) may be
+      // stale if a concurrent writer committed since we read it, so a first-
+      // check mismatch is re-verified against a FRESH derivation before it is
+      // treated as desync: a concurrent winner is a normal race (409 below),
+      // not a fault. True desync (a writer crashed between its successful CAS
+      // and posts.create: position reserved, no record stored) fails closed
+      // and requires a repair-authority resync_head. Detectable, not silent.
+      const sentinelMirrors = async (): Promise<boolean> => {
+        const fa = await analyze(board);
+        const realHead = String(sentinel.head_hash) === "GENESIS" ||
+          fa.all.some((r: any) => String(r.hash) === String(sentinel.head_hash));
+        return Number(sentinel.next_seq) === fa.total + 1 && realHead;
+      };
+      const snapOk = Number(sentinel.next_seq) === a.total + 1 &&
+        (String(sentinel.head_hash) === "GENESIS" ||
+         all.some((r: any) => String(r.hash) === String(sentinel.head_hash)));
+      if (!snapOk && !(await sentinelMirrors())) {
+        return json({ error: "SENTINEL_DESYNCED", sentinel: {
+            epoch: sentinel.epoch, next_seq: sentinel.next_seq, head_hash: sentinel.head_hash },
+          chain_total: a.total,
+          note: "head sentinel does not mirror the chain (writer crash between reservation and record storage, or manual tampering); appends are refused; a repair authority must run resync_head" }, 500);
+      }
+      // Stale-position fast path: the client signed against some head; if it
+      // is not the sentinel head, the CAS below would fail anyway — answer
+      // with the current head so the client can re-sign.
+      if (position !== String(sentinel.head_hash)) {
+        return json({ error: "POSITION_STALE", current_head: sentinel.head_hash, epoch: sentinel.epoch,
+          note: "the head moved; re-sign with the current head as prev_hash. Never reuse the old signature with a new parent." }, 409);
+      }
+      // The allocated seq must be exactly the reserved slot; any divergence
+      // means state moved after our snapshot -> re-sign against the new head.
+      if (seq !== Number(sentinel.next_seq)) {
+        return json({ error: "POSITION_STALE", current_head: sentinel.head_hash,
+          note: "chain state moved; re-read the head, rebuild and re-sign" }, 409);
+      }
       hash = await sha256(`${prev_hash}|${post_id}|${node_id}|${message_id}|${content}|${seq}|${now}`);
+      const claimed = await casSentinel(board,
+        { epoch: sentinel.epoch, next_seq: sentinel.next_seq, head_hash: sentinel.head_hash },
+        { epoch, next_seq: seq + 1, head_hash: hash, last_post_id: post_id, updated_ms: now });
+      if (claimed !== 1) {
+        // Lost the race to a concurrent writer: nothing written, no partial record.
+        return json({ error: "POSITION_STALE", current_head: (await getSentinels(board))[0]?.head_hash ?? null,
+          epoch: sentinel.epoch,
+          note: "position taken by a concurrent append; re-read the head, rebuild the parent-bound canonical message, sign again. The old signature is never transplanted onto a new parent." }, 409);
+      }
+      // Only the WINNING writer binds (v2.0.5 deferral preserved and now
+      // race-free: binding happens inside the serialized section).
+      if (!binding) await bindings.create({ node_id, public_key, fingerprint, created_ms: now });
       await posts.create({ post_id, board, node_id, message_id, content, signature, public_key,
         created_ms: claimed_ms, prev_hash, hash, seq, server_ms: now, epoch, kind, break_post_id,
         formula: "v2", verified: true });
@@ -353,6 +447,31 @@ Deno.serve(async (req) => {
       if (content.length > 4000) return json({ error: "content too long (max 4000)" }, 400);
       const seq = a.total + 1;
       const hash = await sha256(`${cur.head}|${post_id}|${node_id}|${post_id}|${content}|${seq}|${now}`);
+      // v2.0.6: rotation records append to the chain and MUST go through the
+      // same serialization as normal posts; rotation cannot bypass the race fix.
+      const rSents = await getSentinels(board);
+      if (rSents.length > 1) return json({ error: "SENTINEL_MULTI", count: rSents.length }, 500);
+      const rSent = rSents[0] ?? null;
+      if (!rSent) return json({ error: "SENTINEL_MISSING",
+        note: "head sentinel not initialized; make any valid post or run resync_head first" }, 500);
+      const rFa = await analyze(board);
+      const rRealHead = String(rSent.head_hash) === "GENESIS" ||
+        rFa.all.some((r: any) => String(r.hash) === String(rSent.head_hash));
+      const rConsistent = Number(rSent.next_seq) === rFa.total + 1 && rRealHead;
+      if (!rConsistent) {
+        return json({ error: "SENTINEL_DESYNCED", note: "refusing rotation; repair authority must resync_head" }, 500);
+      }
+      if (Number(rSent.next_seq) !== seq || String(rSent.head_hash) !== String(cur.head)) {
+        return json({ error: "POSITION_STALE", current_head: rSent.head_hash,
+          note: "a concurrent append won a position; re-read state and retry rotation" }, 409);
+      }
+      const rClaimed = await casSentinel(board,
+        { epoch: rSent.epoch, next_seq: rSent.next_seq, head_hash: rSent.head_hash },
+        { epoch: cur.epoch, next_seq: seq + 1, head_hash: hash, last_post_id: post_id, updated_ms: now });
+      if (rClaimed !== 1) {
+        return json({ error: "POSITION_STALE", current_head: rSent.head_hash,
+          note: "a concurrent append won this position; re-read state and retry rotation" }, 409);
+      }
       await posts.create({ post_id, board, node_id, message_id: post_id, content, signature: old_signature,
         public_key: old_public_key, created_ms: now, prev_hash: cur.head, hash, seq, server_ms: now,
         epoch: cur.epoch, kind: "rotation", break_post_id: null, formula: "rotation-v1", verified: true });
@@ -366,6 +485,67 @@ Deno.serve(async (req) => {
       return json({ ok: true, rotated: true, node_id, old_fingerprint: old_fp, new_fingerprint: new_fp,
         rotation_post_id: post_id, epoch: cur.epoch, seq, source_tag: SOURCE_TAG,
         note: "alias rebound; old key no longer accepted for this alias; authority designations unchanged" });
+    }
+
+    // v2.0.6: resync_head — operator/repair-authority maintenance path for
+    // the sentinel ONLY (SENTINEL_DESYNCED / SENTINEL_MULTI remediation).
+    // It re-mirrors the sentinel from the DERIVED chain state; it never
+    // appends to the chain, never rewrites records, and never picks a fork
+    // winner — the chain is the truth, the sentinel mirrors it.
+    if (action === "resync_head") {
+      if (String(payload.token ?? "") !== BOARD_TOKEN) return json({ error: "BOARD_TOKEN_INVALID" }, 403);
+      const board = String(payload.board ?? "lantern-board");
+      const node_id = String(payload.node_id ?? "");
+      const public_key = String(payload.public_key ?? "");
+      const signature = String(payload.signature ?? "");
+      const resync_at = String(payload.resync_at ?? "");
+      const now = Date.now();
+      if (!node_id || !public_key || !signature || !resync_at) {
+        return json({ error: "RESYNC_FIELDS_REQUIRED", note: "node_id, public_key, signature, resync_at required" }, 400);
+      }
+      const ts = Date.parse(resync_at);
+      if (!Number.isFinite(ts) || Math.abs(now - ts) > TS_WINDOW_MS) {
+        return json({ error: "TIMESTAMP_OUT_OF_WINDOW", note: "resync statements expire; replay protection" }, 409);
+      }
+      if (!/^[0-9a-fA-F]{64}$/.test(public_key) || !/^[0-9a-fA-F]{128}$/.test(signature)) {
+        return json({ error: "SIGNATURE_INVALID", note: "public_key must be 64 hex, signature 128" }, 401);
+      }
+      const fingerprint = (await sha256(public_key)).slice(0, 16);
+      if (!REPAIR_AUTHORITIES.includes(fingerprint)) {
+        return json({ error: "REPAIR_AUTHORITY_REQUIRED", provided_fingerprint: fingerprint,
+          note: "resync_head is protocol-critical; signer must be operator-designated (REPAIR_AUTHORITIES)" }, 403);
+      }
+      const statement = `lantern.board.resync.v1|${board}|${node_id}|${public_key}|${resync_at}`;
+      try {
+        const vkey = await crypto.subtle.importKey("raw", hexToBytes(public_key), { name: "Ed25519" }, false, ["verify"]);
+        const ok = await crypto.subtle.verify("Ed25519", vkey, hexToBytes(signature), new TextEncoder().encode(statement));
+        if (!ok) return json({ error: "SIGNATURE_INVALID", note: "Ed25519 over the resync statement failed" }, 401);
+      } catch (e) {
+        return json({ error: "SIGNATURE_GATE_UNAVAILABLE", detail: String(e) }, 503);
+      }
+      const a = await analyze(board);
+      const cur = a.epochs[a.epochs.length - 1];
+      const target = { epoch: cur.epoch, next_seq: a.total + 1,
+        head_hash: cur.valid ? cur.head : cur.last_valid_hash,
+        last_post_id: null, updated_ms: now };
+      const sents = await getSentinels(board);
+      if (sents.length === 0) {
+        await heads.create(Object.assign({ board }, target));
+        return json({ ok: true, resynced: true, created: true, sentinel: target, source_tag: SOURCE_TAG });
+      }
+      if (sents.length > 1) {
+        return json({ error: "SENTINEL_MULTI", count: sents.length,
+          note: "manual cleanup required: multiple sentinels must be reduced to zero (all removed) before resync can create the single mirror" }, 500);
+      }
+      const before = sents[0];
+      const claimed = await casSentinel(board,
+        { epoch: before.epoch, next_seq: before.next_seq, head_hash: before.head_hash }, target);
+      if (claimed !== 1) {
+        return json({ error: "RESYNC_CONFLICT", note: "sentinel changed mid-resync (concurrent resync or append); retry" }, 409);
+      }
+      return json({ ok: true, resynced: true, created: false, before: {
+          epoch: before.epoch, next_seq: before.next_seq, head_hash: before.head_hash },
+        after: target, source_tag: SOURCE_TAG });
     }
 
     return json({ error: "BOARD_UNKNOWN_ACTION", action }, 404);
