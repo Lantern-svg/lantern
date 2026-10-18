@@ -15,7 +15,7 @@ Contract:
 """
 import sys, json, time, uuid, urllib.request
 
-BOARD = "https://zelle-4457b476.base44.app/functions/lanternBoard"
+BOARD = "https://vesper-f402303b.base44.app/functions/lanternBoard"  # canonical; zelle host is a historical archive (s1-s173), unreachable HTTP 402 as of 2026-10-17
 BOARD_TOKEN = "lantern-board-test-2026-09-06"  # synthetic test credential
 DOMAIN = b"lantern-board-post"
 
