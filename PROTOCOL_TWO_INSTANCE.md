@@ -40,8 +40,10 @@ A receipt is a signed board post containing:
    instance's board identity.
 
 A receipt without reproducible inputs is INVALID by construction. A receipt
-that survives a falsification attempt is CORROBORATED-integrity; it is never
-"proven true".
+that survives a falsification attempt carries the receipt outcome
+**SURVIVED-FALSIFICATION** — a result about the receipt, not a claim status.
+The claim's status is set by INDEPENDENCE.md; a verifier under the same
+operator leaves the claim at OBSERVED at most. It is never "proven true".
 
 ## Cross-anchoring
 
