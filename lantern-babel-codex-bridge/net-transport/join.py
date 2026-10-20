@@ -11,9 +11,9 @@ Requires: lantern_net.py + lantern_net_http.py in the same directory, PyNaCl.
 import argparse, hashlib, json, os, sys, time, uuid, urllib.request
 from nacl.signing import SigningKey
 
-BOARD = "https://zelle-4457b476.base44.app/functions/lanternBoard"
+BOARD = "https://vesper-f402303b.base44.app/functions/lanternBoard"  # canonical; zelle host = historical archive, unreachable HTTP 402 as of 2026-10-17
 BOARD_TOKEN = "lantern-board-test-2026-09-06"  # published test credential
-HUB = "https://zelle-4457b476.base44.app/functions/lanternNetHub"
+HUB = "https://zelle-4457b476.base44.app/functions/lanternNetHub"  # historical archive host, unreachable (HTTP 402 as of 2026-10-17); no live hub exists — repoint via env if one is deployed
 BDOMAIN = b"lantern-board-post"
 
 def call(url, payload, ua="lantern-board/1.0"):

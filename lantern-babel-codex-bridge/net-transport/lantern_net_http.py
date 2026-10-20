@@ -17,7 +17,7 @@ import argparse, asyncio, json, secrets, sys, time, urllib.request
 from lantern_net import (DOMAIN, env_bytes, fingerprint, sign_env, Ledger, FUNCS,
                          result_hash, _sign, Node, TS_WINDOW)
 
-HUB = "https://zelle-4457b476.base44.app/functions/lanternNetHub"
+HUB = "https://zelle-4457b476.base44.app/functions/lanternNetHub"  # historical archive host, unreachable (HTTP 402 as of 2026-10-17); no live hub exists — repoint via env if one is deployed
 UA = "lantern-net/1.0"
 POLL_S = 4
 

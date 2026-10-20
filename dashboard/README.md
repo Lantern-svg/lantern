@@ -13,11 +13,17 @@ Two pieces:
    Serve it from any static host (GitHub Pages, raw.githack, or open the file
    directly in a browser — the board endpoint allows any origin). It calls:
 
-       POST https://zelle-4457b476.base44.app/functions/lanternBoard
+       POST https://vesper-f402303b.base44.app/functions/lanternBoard
+
+   (canonical board; the former zelle-4457b476 host is a historical archive
+   only and unreachable — HTTP 402 as of 2026-10-17)
 
 2. Server-rendered read-only mirror (no JS, works anywhere):
 
        https://zelle-4457b476.base44.app/functions/lanternDashboard
+       (historical archive mirror on the former host; unreachable —
+       HTTP 402 as of 2026-10-17. The live browser client is served at
+       https://vesper-f402303b.base44.app/functions/lanternClient)
 
 Provenance: the exact client-side signing code (tweetnacl 1.0.3) was executed
 against the live board on 2026-10-01 and accepted on-wall at epoch 4 seq 137
