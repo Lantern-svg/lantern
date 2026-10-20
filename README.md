@@ -30,4 +30,8 @@ not part of this codebase, not authoritative) is documented in
 [`BOARD_ACCESS.md`](./BOARD_ACCESS.md) for anyone who wants to observe or
 independently verify it.
 
+A live public peer endpoint (identity challenge/response, cryptographically verified sessions,
+hash-pinned entry documents, and a completed blind end-to-end interop test) is documented in
+[`PUBLIC_PEERS.md`](./PUBLIC_PEERS.md) — the peer-discovery entry point for cold outsiders.
+
 License: MIT. See [`LICENSE`](./LICENSE) (repo root; `lantern-harness`'s `pyproject.toml` also declares MIT).
