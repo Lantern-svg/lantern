@@ -1,0 +1,157 @@
+{
+  "battery": "lantern-mailbox-phase2",
+  "date": "2026-10-13",
+  "summary": {
+    "total": 16,
+    "passed": 16,
+    "failed": 0,
+    "not_tested": 0
+  },
+  "results": [
+    {
+      "id": "A",
+      "name": "Identity binding",
+      "result": "PASS",
+      "procedure": "two separate-process participants bind mailboxes; lookup records checked",
+      "evidence": "alpha fp=2328c1e0159e68db beta fp=ee89ccf8cd6752b2 distinct keys, fingerprints recomputed server-side and match state files",
+      "environment": "one operator sandbox; local Node process running the exact core handler; in-memory store; participants in separate processes with independent keypairs",
+      "limitations": ""
+    },
+    {
+      "id": "B",
+      "name": "Successful messaging",
+      "result": "PASS",
+      "procedure": "send worker (alpha, separate process) encrypts+signs; fetch worker (beta, separate process) retrieves, verifies sender against discovery binding, decrypts",
+      "evidence": "server accept 200; beta fetched count=1; sender_verified=True; plaintext byte-exact match=True",
+      "environment": "one operator sandbox; local Node process running the exact core handler; in-memory store; participants in separate processes with independent keypairs",
+      "limitations": "same-operator two-instance exchange; NOT independent organizational participation"
+    },
+    {
+      "id": "C",
+      "name": "Confidentiality",
+      "result": "PASS",
+      "procedure": "two unauthorized third instances attempt sealed-box decryption of every stored ciphertext",
+      "evidence": "4 decryption attempts by non-recipients, 0 succeeded",
+      "environment": "one operator sandbox; local Node process running the exact core handler; in-memory store; participants in separate processes with independent keypairs",
+      "limitations": "sealed box: no forward secrecy, no metadata protection; server sees ciphertext and addresses"
+    },
+    {
+      "id": "D",
+      "name": "Impersonation",
+      "result": "PASS",
+      "procedure": "(1) fresh key claims beta's alias (2) attacker signs a bind claiming beta's identity key",
+      "evidence": "alias claim -> 403 ALIAS_BOUND_TO_OTHER_KEY; key claim w/ forged sig -> 401 BINDING_SIGNATURE_INVALID",
+      "environment": "one operator sandbox; local Node process running the exact core handler; in-memory store; participants in separate processes with independent keypairs",
+      "limitations": ""
+    },
+    {
+      "id": "E",
+      "name": "Tampering",
+      "result": "PASS",
+      "procedure": "(1) ciphertext altered after signing, original envelope kept (2) envelope message_id altered after signing, signature unchanged",
+      "evidence": "altered ct -> 400 CIPHERTEXT_HASH_MISMATCH; altered envelope -> 401 MESSAGE_SIGNATURE_INVALID",
+      "environment": "one operator sandbox; local Node process running the exact core handler; in-memory store; participants in separate processes with independent keypairs",
+      "limitations": ""
+    },
+    {
+      "id": "F",
+      "name": "Authorization",
+      "result": "PASS",
+      "procedure": "third instance obtains a fetch challenge for beta's mailbox and signs the fetch statement with its own valid key",
+      "evidence": "own valid key, wrong identity -> 403 KEY_NOT_BOUND",
+      "environment": "one operator sandbox; local Node process running the exact core handler; in-memory store; participants in separate processes with independent keypairs",
+      "limitations": "possession of mailbox address + challenge does not authorize; key binding enforced"
+    },
+    {
+      "id": "G",
+      "name": "Replay and duplication",
+      "result": "PASS",
+      "procedure": "(1) duplicate message_id resubmission (2) fetch challenge used twice",
+      "evidence": "dup msg -> 409 DUPLICATE_MESSAGE_ID; first fetch 200, reused challenge -> 401 CHALLENGE_ALREADY_USED",
+      "environment": "one operator sandbox; local Node process running the exact core handler; in-memory store; participants in separate processes with independent keypairs",
+      "limitations": ""
+    },
+    {
+      "id": "H",
+      "name": "Key rotation",
+      "result": "PASS",
+      "procedure": "dual-signed rotation (old key signs rotation statement, new key countersigns a fresh bind statement authenticating a new X25519 key)",
+      "evidence": "rotate 200; send w/ old key -> 403 SENDER_NOT_BOUND; send w/ new key -> 200; historical envelopes preserve original sender fingerprint: True",
+      "environment": "one operator sandbox; local Node process running the exact core handler; in-memory store; participants in separate processes with independent keypairs",
+      "limitations": "rotation requires the old key: no silent transfer; clone-key caveat unchanged"
+    },
+    {
+      "id": "I",
+      "name": "Independent operation",
+      "result": "PASS",
+      "procedure": "sender process exits after send; a different process (beta) later retrieves, verifies the sender signature against the discovered binding, and decrypts with no sender participation",
+      "evidence": "sender process terminated; beta verified=True, decrypted byte-exact=True",
+      "environment": "one operator sandbox; local Node process running the exact core handler; in-memory store; participants in separate processes with independent keypairs",
+      "limitations": "retrieval depends on the hosted service being up; verification itself is offline against binding records"
+    },
+    {
+      "id": "J",
+      "name": "Public/private separation",
+      "result": "PASS",
+      "procedure": "full storage dump scanned for plaintext payloads and private key material",
+      "evidence": "leaks found: none; ciphertext stored encrypted: True; plaintext appears nowhere",
+      "environment": "one operator sandbox; local Node process running the exact core handler; in-memory store; participants in separate processes with independent keypairs",
+      "limitations": "no board/public records involved at all in Phase 1; wall untouched"
+    },
+    {
+      "id": "X1",
+      "name": "Malformed canonical serialization",
+      "result": "PASS",
+      "procedure": "signature over reordered/mis-serialized bind statement",
+      "evidence": "-> 401 BINDING_SIGNATURE_INVALID",
+      "environment": "one operator sandbox; local Node process running the exact core handler; in-memory store; participants in separate processes with independent keypairs",
+      "limitations": ""
+    },
+    {
+      "id": "X2",
+      "name": "Expired fetch challenge",
+      "result": "PASS",
+      "procedure": "fetch submitted after challenge TTL (600 s)",
+      "evidence": "-> 410 CHALLENGE_EXPIRED",
+      "environment": "one operator sandbox; local Node process running the exact core handler; in-memory store; participants in separate processes with independent keypairs",
+      "limitations": ""
+    },
+    {
+      "id": "X3",
+      "name": "Reused fetch challenge",
+      "result": "PASS",
+      "procedure": "same challenge submitted twice",
+      "evidence": "first 200; reuse -> 401 CHALLENGE_ALREADY_USED",
+      "environment": "one operator sandbox; local Node process running the exact core handler; in-memory store; participants in separate processes with independent keypairs",
+      "limitations": ""
+    },
+    {
+      "id": "X4",
+      "name": "Altered recipient identity",
+      "result": "PASS",
+      "procedure": "validly-signed envelope addressed to beta's mailbox but claiming gamma's fingerprint",
+      "evidence": "-> 403 RECIPIENT_IDENTITY_MISMATCH",
+      "environment": "one operator sandbox; local Node process running the exact core handler; in-memory store; participants in separate processes with independent keypairs",
+      "limitations": ""
+    },
+    {
+      "id": "X5",
+      "name": "Revoked binding",
+      "result": "PASS",
+      "procedure": "mailbox revoked by its identity key; inbound send, outbound send, and owner fetch attempted after",
+      "evidence": "revoke 200; send to revoked -> 403 RECIPIENT_MAILBOX_NOT_ACTIVE; send from revoked -> 403 SENDER_MAILBOX_NOT_ACTIVE; owner fetch still 200",
+      "environment": "one operator sandbox; local Node process running the exact core handler; in-memory store; participants in separate processes with independent keypairs",
+      "limitations": "revocation is NOT fingerprint-wide key retirement; owner fetch retained for evidence"
+    },
+    {
+      "id": "X6",
+      "name": "Encryption-key substitution",
+      "result": "PASS",
+      "procedure": "(1) attacker rotation attempt with attacker keys on beta's mailbox (2) attacker bind claiming beta's alias+identity key with attacker X25519 key",
+      "evidence": "rotation -> 403 ROTATION_NOT_BOUND; substitution bind -> 401 BINDING_SIGNATURE_INVALID",
+      "environment": "one operator sandbox; local Node process running the exact core handler; in-memory store; participants in separate processes with independent keypairs",
+      "limitations": ""
+    }
+  ],
+  "environment_note": "All tests ran in ONE operator sandbox. Server = local Node process running the exact core.js to be embedded in the deployable function, in-memory store. Participants = separate processes, independently generated Ed25519 signing keys and X25519 encryption keys. A passing two-instance exchange here is Tier-1 same-operator evidence, NOT independent organizational participation. Live deployed-service behavior: NOT TESTED pending the Phase 4 deployment gate."
+}
