@@ -119,6 +119,11 @@ def test_temporal_replay():
 
 
 def test_evidence_decay():
+    # v0.85 (Tier 2 item 9): decay is policy-dependent. Default
+    # "staleness-v1" = NO age-based decay; "legacy-steps" preserves the
+    # original behavior exactly. This test pins BOTH laws.
+    import lantern.core as core_module
+
     lantern = Lantern()
 
     obs = lantern.observe(
@@ -139,9 +144,17 @@ def test_evidence_decay():
     for _ in range(10):
         lantern.kernel.step += 1
 
+    # Default (staleness-v1): weight does NOT decay with age.
     later = lantern.kernel.belief("test")
+    assert later == initial
 
-    assert later < initial
+    # Legacy policy: original age-based decay preserved exactly.
+    core_module.DECAY_POLICY = "legacy-steps"
+    try:
+        later_legacy = lantern.kernel.belief("test")
+        assert later_legacy < initial
+    finally:
+        core_module.DECAY_POLICY = "staleness-v1"
 
 
 # ==================================================

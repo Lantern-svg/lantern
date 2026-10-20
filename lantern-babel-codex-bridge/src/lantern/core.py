@@ -24,6 +24,11 @@ from types import MappingProxyType
 from .scars import Scar, ScarRecord, create_scar as build_scar_record, persisted_record
 
 
+# Tier 2 item 9 (2026-10-17): decay policy switch. "staleness-v1" (default)
+# = no silent age-based decay; "legacy-steps" = the original behavior kept
+# verbatim for one version (overridable via env at import time).
+DECAY_POLICY = os.environ.get("LANTERN_DECAY_POLICY", "staleness-v1")
+
 def uid(): return str(uuid.uuid4())
 def now(): return datetime.now(timezone.utc).isoformat()
 def chronicle_body(event): return {"id": event.id, "type": event.event_type, "source": event.source, "payload": event.payload}
@@ -129,9 +134,21 @@ class Evidence:
     step: int
     owner_instance: str = ""
     id: str = field(default_factory=uid)
+    stale: bool = False
+    superseded_by: str = ""
+    stale_reason: str = ""
     def decayed_weight(self, current_step, decay_rate=0.05):
-        age = max(0, current_step - self.step)
-        return self.weight * max(0, 1 - decay_rate * age)
+        # Tier 2 item 9 (2026-10-17): under "staleness-v1" weight does NOT
+        # decay with age; only an explicit stale flag or supersession
+        # pointer drops it. Under "legacy-steps" the original age-based
+        # decay applies exactly (unit weight reaches 0 at 20 ledger steps
+        # and never recovers - verified by test_decayed_weight_reaches_zero_at_20_steps_legacy).
+        if DECAY_POLICY == "legacy-steps":
+            age = max(0, current_step - self.step)
+            return self.weight * max(0, 1 - decay_rate * age)
+        if self.stale or self.superseded_by:
+            return 0.0
+        return self.weight
 
 
 @dataclass(frozen=True)
@@ -240,6 +257,7 @@ class _OwnedList(list):
 
 class EvidenceKernel:
     def __init__(self, owner_instance: str = ""):
+        self.scar_protected = set()
         self.step = 0
         self.owner_instance = owner_instance
         self.observations = _OwnedDict(owner_instance)
@@ -281,12 +299,52 @@ class EvidenceKernel:
             self.evidence._admitting = False
         contradiction = self.detect_contradiction(concept)
         return evidence, contradiction
-    def belief(self, concept, at_step=None):
+    def protect_for_scar(self, evidence_ids):
+        # Tier 2 item 9: scar-linked evidence is exempt from staleness and
+        # supersession. A DISPROVEN record is a permanent scar: it is never
+        # aged out, zeroed, or silently decayed.
+        ids = tuple(eid for eid in (evidence_ids or ()) if eid)
+        self.scar_protected.update(ids)
+        return len(ids)
+    def _replace_evidence(self, evidence_id, **changes):
+        for i, e in enumerate(self.evidence):
+            if e.id == evidence_id:
+                if evidence_id in self.scar_protected:
+                    raise ValueError(
+                        f"EVIDENCE_SCAR_PROTECTED: {evidence_id} is referenced by a scar "
+                        "and cannot be stale-marked or superseded (permanent-scars rule)")
+                new = replace(e, **changes)
+                self.evidence._admitting = True
+                try:
+                    self.evidence[i] = new
+                finally:
+                    self.evidence._admitting = False
+                return new
+        raise KeyError(evidence_id)
+    def mark_stale(self, evidence_id, reason=""):
+        # Explicit staleness instead of silent decay: the flag is set by a
+        # recorded decision (failed freshness probe, staleness review),
+        # never by the passage of ledger steps alone.
+        return self._replace_evidence(evidence_id, stale=True, stale_reason=reason or "marked stale")
+    def mark_superseded(self, evidence_id, superseding_evidence_id, reason=""):
+        # Supersession instead of decay: weight drops once, and the pointer
+        # records WHICH evidence superseded it, so the decision is auditable.
+        if not any(e.id == superseding_evidence_id for e in self.evidence):
+            raise KeyError(superseding_evidence_id)
+        return self._replace_evidence(evidence_id, superseded_by=superseding_evidence_id,
+            stale_reason=reason or "superseded")
+    def belief(self, concept, at_step=None, include_stale=False):
+        # include_stale=True reports the aggregate WITH stale/superseded
+        # evidence counted, so consumers can see both views; the default
+        # excludes it (matching decayed_weight's staleness-v1 semantics).
         if at_step is None: at_step = self.step
         score = 0
         for evidence in self.evidence:
             if evidence.concept == concept and evidence.step <= at_step:
-                score += evidence.decayed_weight(at_step) * evidence.sign
+                w = evidence.decayed_weight(at_step)
+                if w == 0.0 and include_stale and (evidence.stale or evidence.superseded_by):
+                    w = evidence.weight
+                score += w * evidence.sign
         return self.sigmoid(score)
     def sigmoid(self, value): return 1 / (1 + math.exp(-value))
     def latest_contradiction(self, concept):
@@ -451,7 +509,7 @@ class Lantern:
         if not self.bus.chronicle.verify(): raise RuntimeError("Chronicle verification failed")
         snapshot = self.load_snapshot(snapshot_path)
         if snapshot is not None:
-            self.kernel = EvidenceKernel.restore(snapshot); self.scars = {scar_data["id"]: Scar.from_dict(scar_data) for scar_data in snapshot.get("scars", [])}; pending = self.bus.chronicle.records_after(snapshot["chronicle_chain"])
+            self.kernel = EvidenceKernel.restore(snapshot); self.scars = {scar_data["id"]: Scar.from_dict(scar_data) for scar_data in snapshot.get("scars", [])}; [self.kernel.protect_for_scar(s.related_evidence_ids) for s in self.scars.values()]; pending = self.bus.chronicle.records_after(snapshot["chronicle_chain"])
         else: pending = self.bus.chronicle.replay()
         for record in pending or []:
             event = KernelEvent(id=record["id"], event_type=record["type"], source=record["source"], payload=record["payload"])
@@ -480,7 +538,7 @@ class Lantern:
                     self.kernel.resolutions.append(ResolutionEvent(contradiction_id=payload["contradiction"], decision=payload["decision"], reasoning=payload["reasoning"], confidence=payload["confidence"], evidence_snapshot=payload["evidence_snapshot"], owner_instance=payload.get("owner_instance", self.kernel.owner_instance), id=payload["id"]))
                 finally:
                     self.kernel.contradictions._admitting = False
-        elif event.event_type == "SCAR_RECORDED": self.scars[Scar.from_dict(payload).id] = Scar.from_dict(payload)
+        elif event.event_type == "SCAR_RECORDED": _scar_ev = Scar.from_dict(payload); self.scars[_scar_ev.id] = _scar_ev; self.kernel.protect_for_scar(getattr(_scar_ev, "related_evidence_ids", ()))
     def _apply_to_runtime(self, event): self._apply_to_kernel(event)
     def observe(self, content, source, reliability, metadata=None):
         obs = self.kernel.observe(content, source, reliability, metadata); self.bus.publish(KernelEvent("OBSERVATION_CREATED", "kernel", {"id": obs.id, "content": content, "source": obs.source, "reliability": obs.reliability, "step": obs.step, "metadata": dict(obs.metadata), "owner_instance": obs.owner_instance})); return obs
@@ -498,7 +556,7 @@ class Lantern:
     def create_scar(self, **kwargs) -> ScarRecord: return build_scar_record(**kwargs)
     def persist_scar(self, record: ScarRecord) -> ScarRecord:
         if self.bus.chronicle is None: raise ValueError("No chronicle attached; cannot persist scar")
-        scar = record.scar; self.bus.publish(KernelEvent("SCAR_RECORDED", scar.source, scar.to_dict(), id=scar.id, timestamp=scar.timestamp)); self.scars[scar.id] = scar; verified = self.bus.chronicle.verify() and scar.id in self.scars; return persisted_record(scar, verified=verified)
+        scar = record.scar; self.bus.publish(KernelEvent("SCAR_RECORDED", scar.source, scar.to_dict(), id=scar.id, timestamp=scar.timestamp)); self.scars[scar.id] = scar; self.kernel.protect_for_scar(getattr(scar, "related_evidence_ids", ())); verified = self.bus.chronicle.verify() and scar.id in self.scars; return persisted_record(scar, verified=verified)
     def load_scar(self, scar_id: str) -> Optional[ScarRecord]: scar = self.scars.get(scar_id); return None if scar is None else ScarRecord(scar=scar, constructed=True, persisted=True, verified=self.bus.chronicle.verify() if self.bus.chronicle is not None else False, replayed=False)
     def replay_scars(self): return [ScarRecord(scar=scar, constructed=True, persisted=True, verified=True, replayed=True) for scar in self.scars.values()]
     def verify_scar(self, scar_id: str) -> bool: return False if self.bus.chronicle is None else self.bus.chronicle.verify() and scar_id in self.scars
