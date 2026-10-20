@@ -171,6 +171,8 @@ Deno.serve(async (req) => {
           message_id: r.message_id, content: r.content, signature: r.signature, public_key: r.public_key,
           claimed_ms: r.created_ms ?? null, server_ms: r.server_ms ?? null, formula: r.formula ?? "legacy",
           kind: r.kind ?? "post", break_post_id: r.break_post_id ?? null,
+          claim_status: r.claim_status ?? null, content_provenance: r.content_provenance ?? null,
+          signature_valid: r.verified ?? null,
           prev_hash: r.prev_hash, hash: r.hash, verified: r.verified ?? null });
       }
       return json({ ok: true, source_tag: SOURCE_TAG, board, count: chain.length, epochs: a.epochs, posts: chain });
@@ -193,6 +195,13 @@ Deno.serve(async (req) => {
       const public_key = String(payload.public_key ?? "");
       const claimed_ms = Number(payload.created_ms ?? 0);
       const kind = String(payload.kind ?? "post");
+      // PROVENANCE FIELDS (v2.0.6 proposal, Tier 2 item 7 — 2026-10-17):
+      // claim_status is AUTHOR-ASSERTED. The server records it verbatim and
+      // NEVER validates its truth; readers must not treat it as server-verified.
+      // Default CLAIMED. signature_valid is SERVER-computed only (the Ed25519
+      // gate below); it is never accepted from clients.
+      const claim_status = String(payload.claim_status ?? "CLAIMED");
+      const content_provenance = String(payload.content_provenance ?? "");
       const position = String(payload.prev_hash ?? "");
       for (const [n, v] of [["node_id", node_id], ["message_id", message_id], ["content", content],
         ["signature", signature], ["public_key", public_key], ["created_ms", String(claimed_ms)]] as [string, string][]) {
@@ -289,7 +298,7 @@ Deno.serve(async (req) => {
       hash = await sha256(`${prev_hash}|${post_id}|${node_id}|${message_id}|${content}|${seq}|${now}`);
       await posts.create({ post_id, board, node_id, message_id, content, signature, public_key,
         created_ms: claimed_ms, prev_hash, hash, seq, server_ms: now, epoch, kind, break_post_id,
-        formula: "v2", verified: true });
+        formula: "v2", verified: true, claim_status, content_provenance, signature_valid: true });
       return json({ ok: true, post_id, epoch, seq, server_ms: now, prev_hash, hash, fingerprint, kind, source_tag: SOURCE_TAG });
     }
 
