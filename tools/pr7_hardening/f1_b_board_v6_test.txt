@@ -1,0 +1,13 @@
+source=board_v6_test schedule=b order=reverse
+writer A: node=alpha fp=747e7984ada0dc3f | writer B: node=beta fp=5cdc99c3916cdcb0 | filterOrder=reverse
+pre-state: heads=[{"id":"h-seed","next_seq":1,"head":"GENESIS"}]
+P1 A at CAS: pending=[LanternBoardHead.updateMany]
+P2 B at CAS with same pre-state: pending=[LanternBoardHead.updateMany | LanternBoardHead.updateMany]
+P3 A done: status=200 ok | heads=[{"id":"h-seed","next_seq":2,"head":"2a0448b46d8d"}]
+P4 B done: status=409 POSITION_STALE
+final heads=[{"id":"h-seed","next_seq":2}] created_by_post_path=0
+post node=alpha seq=1 prev=GENESIS
+CAS q={"board":"lantern-board","epoch":1,"next_seq":1,"head_hash":"GENESIS"} -> updated=1 targets=[h-seed]
+CAS q={"board":"lantern-board","epoch":1,"next_seq":1,"head_hash":"GENESIS"} -> updated=0 targets=[]
+dup seqs=[] verify_total=1 epochs=[{"e":1,"valid":true}]
+VERDICT: CLEAN

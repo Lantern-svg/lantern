@@ -1,0 +1,56 @@
+{
+ "S1": {
+  "heldOp": "LanternPost.create",
+  "resync": 200,
+  "a": 200
+ },
+ "S1b": {
+  "retryOld": 409,
+  "retryOldErr": "DUPLICATE_MESSAGE_ID",
+  "freshWriter": 500,
+  "freshWriterErr": "SENTINEL_DESYNCED",
+  "dup": [],
+  "posts": 2
+ },
+ "R13a": {
+  "rot": 200,
+  "a": 409,
+  "aErr": "POSITION_STALE",
+  "oldRetry": 403,
+  "oldRetryErr": "BINDING_MISMATCH",
+  "newPost": 200,
+  "dup": []
+ },
+ "R13b": {
+  "rotFirst": 500,
+  "rotFirstErr": "SENTINEL_DESYNCED",
+  "bindingStillOldAfterFailedRot": true,
+  "aCommit": 200,
+  "rotRetry": 200,
+  "newPost": 200,
+  "dup": []
+ },
+ "P": {
+  "paginated": true,
+  "attempted": 120,
+  "ok": 51,
+  "errs": {
+   "POSITION_STALE": 69
+  },
+  "firstErr": {
+   "at": 52,
+   "status": 409,
+   "err": "POSITION_STALE"
+  },
+  "posts": 51,
+  "dup": [],
+  "headIsLast": false,
+  "lateAliasPost": 409,
+  "bindingRecords": 26,
+  "dupBindings": 0
+ },
+ "_meta": {
+  "module": "board_baset_test",
+  "elapsed_ms": 1502
+ }
+}

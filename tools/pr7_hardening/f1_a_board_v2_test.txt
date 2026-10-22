@@ -1,0 +1,15 @@
+source=board_v2_test schedule=a order=reverse
+writer A: node=alpha fp=899cfbc5f8b622a3 | writer B: node=beta fp=fe2448368ef81a58 | filterOrder=reverse
+P1 A blocked: pending=[LanternBoardHead.create] heads=0 posts=0
+P2 B read empty too: pending=[LanternBoardHead.create | LanternBoardHead.create]
+P3 A done: status=200 ok | posts=[{"seq":1,"node":"alpha","prev":"GENESIS"}] | heads=[{"id":"id-000001","next_seq":2,"head":"7779c4a5878b"}]
+P4 B done: status=200 ok
+sentinel id=id-000001 next_seq=2 head_hash=7779c4a5878b4c96
+sentinel id=id-000004 next_seq=2 head_hash=77f1bb65831c57fc
+final sentinel count=2
+post node=alpha seq=1 prev=GENESIS hash=7779c4a5878b4c96
+post node=beta seq=1 prev=GENESIS hash=77f1bb65831c57fc
+CAS q={"board":"lantern-board","epoch":1,"next_seq":1,"head_hash":"GENESIS"} -> updated=1 targets=[id-000001]
+CAS q={"board":"lantern-board","epoch":1,"next_seq":1,"head_hash":"GENESIS"} -> updated=1 targets=[id-000004]
+dup seqs=[1] verify_total=2 epochs=[{"e":1,"valid":false}]
+VERDICT: FORK

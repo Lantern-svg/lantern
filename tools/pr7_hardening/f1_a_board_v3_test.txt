@@ -1,0 +1,9 @@
+source=board_v3_test schedule=a order=reverse
+writer A: node=alpha fp=9d58045341339099 | writer B: node=beta fp=75cb2ae0bf312d9b | filterOrder=reverse
+P1 A blocked: pending=[] heads=0 posts=0
+P2 B read empty too: pending=[]
+P3 A done: status=500 SENTINEL_MISSING | posts=[] | heads=[]
+P4 B done: status=500 SENTINEL_MISSING
+final sentinel count=0
+dup seqs=[] verify_total=0 epochs=[{"e":1,"valid":true}]
+VERDICT: CLEAN

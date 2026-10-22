@@ -1,0 +1,28 @@
+{
+ "source": "board_pr7_test",
+ "source_sha256": "652778b1921e75dda7ccdb6ee6717fb55f6310972e80146689e00def4175ccea",
+ "scenario": "random-steady",
+ "writers": 24,
+ "trials_attempted": 300,
+ "trials_completed": 300,
+ "classification_counts": {
+  "fork": 0,
+  "halt": 0,
+  "clean": 300,
+  "other": 0
+ },
+ "sum_check": 300,
+ "timeouts": 0,
+ "dup_seq_positions": 0,
+ "false_desync_responses": 2233,
+ "in_flight_responses": 0,
+ "missing_responses": 0,
+ "runtime_ms": {
+  "median": 64,
+  "max": 92
+ },
+ "seed": 101,
+ "trial_timeout_ms": 10000,
+ "delay_policy": "mock-yield-0-2-per-op (seeded mulberry32)",
+ "reproduction": "deno run -A --quiet random.ts board_pr7_test 24 300 101 steady"
+}

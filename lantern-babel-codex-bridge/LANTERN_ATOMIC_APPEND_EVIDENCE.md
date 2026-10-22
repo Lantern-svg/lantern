@@ -108,3 +108,43 @@ Raw live captures retained: `raw/` in this evidence bundle (both runs: setup, 6�
 - [ ] Rotate-path concurrent battery (NOT TESTED above)
 - [ ] End-to-end v2.0.6 function against real entities (blocked on deploy authorization)
 - [ ] Operator decision: deploy (then wall record per convention), or hold
+
+---
+
+## v2.0.7 addendum (2026-10-21, local harness evidence — no deployment)
+
+On top of v2.0.6 this branch adds, in the same additive fail-closed style:
+
+1. **Post-CAS repair fence.** After a writer wins the sentinel CAS, the
+   sentinel is re-read immediately before the record create
+   (`sentinelStillOurs`). If a repair-authority `resync_head` reclaimed the
+   reservation in between, the writer refuses with 409 `POSITION_REPAIRED`
+   and commits nothing. Without the fence, a reproduced scenario has the
+   slow writer commit into the reclaimed position (HTTP 200) and the board
+   halt with SENTINEL_DESYNCED on the next append; with the fence the
+   reservation loss is a clean retryable refusal and the board stays
+   consistent (S1 in the harness).
+2. **Paginated reads (PAGE=50).** `listAll`, `allBindings`, `getSentinels`
+   paginate with `skip`, closing the provider's observed 50-record list cap.
+   Against a capped provider the unpaged code bricks the board at 51 posts
+   (every subsequent append is POSITION_STALE, because the sentinel knows the
+   true count but the truncated analyze does not); with pagination a
+   120-post build completes cleanly with full verification and deep-page
+   binding lookups intact (P in the harness).
+3. **SOURCE_TAG** updated to v2.0.7 (the one-board phrase retained).
+
+Rotation/revocation boundary, now explicitly tested: admission is evaluated
+at binding lookup; commits serialize through the sentinel CAS, and the alias
+rebind happens only after the rotation record's own chain commit — a post
+racing a completed rotation loses its stale CAS (409), and an old-key
+request first submitted after rotation is refused (403 BINDING_MISMATCH).
+A rotation attempted while an append is mid-flight fails closed
+(SENTINEL_DESYNCED, binding unchanged) rather than rebinding early.
+
+Full methodology, per-scenario invariants, results and file hashes:
+`tools/pr7_hardening/PR7_HARDENING_VERIFICATION.md` and
+`tools/pr7_hardening/MANIFEST_V207.txt` (raw per-trial JSONL retained by the
+reviewer, hash-pinned in the manifest). All evidence is Tier 1
+single-operator; storage-atomicity remains a corroborated provider
+assumption, not a platform-documented guarantee, and the fence narrows but
+does not eliminate the non-atomic exposure.
