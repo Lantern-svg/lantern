@@ -1,0 +1,5 @@
+manage_entity_schemas create LanternRaceProbe with {"slot": {"type":"string","unique":true}}:
+Error: status=400 message=Invalid schema in LanternRaceProbe: `properties.slot.unique`.
+The platform implements no such keyword, so nothing it describes takes effect.
+This write was rejected and nothing was saved.
+(2026-10-13, verbatim from the platform response)

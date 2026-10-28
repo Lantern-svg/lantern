@@ -1,0 +1,204 @@
+{
+ "source": "board_v7_test",
+ "F2": {
+  "a": 500,
+  "aErr": "SENTINEL_MISSING",
+  "b": 500,
+  "bErr": "SENTINEL_MISSING",
+  "heads": 0,
+  "headsState": [],
+  "posts": 0,
+  "dup": [],
+  "probe": 500,
+  "probeErr": "SENTINEL_MISSING",
+  "cas": []
+ },
+ "F3": {
+  "winner": 200,
+  "checker": 500,
+  "checkerErr": "SENTINEL_DESYNCED",
+  "probeAfter": 200,
+  "dup": [],
+  "posts": 2
+ },
+ "F4": {
+  "setup": {
+   "basePost": 200,
+   "realChainHead": "f0f669de526a"
+  },
+  "a_twoHeads": {
+   "status": 500,
+   "err": "SENTINEL_MULTI",
+   "headsAfter": 2
+  },
+  "b_pauseBeforeDeletion": {
+   "status": 500,
+   "err": "SENTINEL_MULTI"
+  },
+  "c_pause_staleRemoved": {
+   "status": 200
+  },
+  "d_pause_goodRemoved": {
+   "status": 500,
+   "err": "SENTINEL_DESYNCED",
+   "dup": []
+  },
+  "e_gap_posts": {
+   "g1": 500,
+   "g1Err": "SENTINEL_MISSING",
+   "g2": 500,
+   "g2Err": "SENTINEL_MISSING",
+   "headsAfterGap": 0
+  },
+  "f_afterRecovery": {
+   "status": 200,
+   "dup": []
+  }
+ },
+ "CP1": {
+  "fault": 500,
+  "faultErr": "BOARD_INTERNAL",
+  "later": 200,
+  "posts": 1
+ },
+ "CP2": {
+  "fault": 500,
+  "later": 200,
+  "posts": 1,
+  "headUnchanged": false
+ },
+ "CP3": {
+  "fault": 500,
+  "headAdvanced": true,
+  "posts": 0,
+  "later": 500,
+  "laterErr": "SENTINEL_DESYNCED",
+  "dup": []
+ },
+ "CP4": {
+  "first": 200,
+  "listedFound": 1,
+  "blindRetry": 409,
+  "blindErr": "DUPLICATE_MESSAGE_ID",
+  "posts": 1
+ },
+ "CP5": {
+  "headMatches": true,
+  "total": 1
+ },
+ "CP7": {
+  "status": 500,
+  "err": "SENTINEL_DESYNCED",
+  "dup": [],
+  "heads": 1
+ },
+ "CP6_unauthorized": {
+  "status": 403,
+  "err": "REPAIR_AUTHORITY_REQUIRED"
+ },
+ "R1": {
+  "status": 200
+ },
+ "R2": {
+  "rotate": 200,
+  "oldKeyPost": 403,
+  "oldKeyErr": "BINDING_MISMATCH",
+  "dup": []
+ },
+ "R3": {
+  "casLoser": 409,
+  "casErr": "POSITION_STALE",
+  "retryOldKey": 403,
+  "retryErr": "BINDING_MISMATCH",
+  "dup": []
+ },
+ "R4": {
+  "rot": 500,
+  "rotErr": "BOARD_INTERNAL",
+  "later": 500,
+  "laterErr": "SENTINEL_DESYNCED",
+  "dup": [],
+  "posts": 1
+ },
+ "R5": {
+  "status": 500,
+  "err": "SENTINEL_MISSING"
+ },
+ "R6": {
+  "rot": 200,
+  "post": 409,
+  "dup": [],
+  "posts": 2
+ },
+ "R7": {
+  "a": 500,
+  "b": 200,
+  "dup": [],
+  "oneRebind": true
+ },
+ "R8": {
+  "winner": 200,
+  "rot": 200,
+  "dup": []
+ },
+ "R9a": {
+  "rot": 500,
+  "later": 500,
+  "laterErr": "SENTINEL_DESYNCED",
+  "dup": []
+ },
+ "R9b": {
+  "first": 500,
+  "firstErr": "ROTATION_REBIND_FAILED",
+  "retry": 200,
+  "dup": [],
+  "rotRecords": 2
+ },
+ "R10": {
+  "bindingAfter": [
+   "dd2d287d"
+  ],
+  "conflictFirst": 409,
+  "conflictErr": "POSITION_STALE",
+  "mover": 200,
+  "retry": 200,
+  "dup": []
+ },
+ "R11": {
+  "sameKey": 409,
+  "sameKeyErr": "ROTATION_SAME_KEY",
+  "badSig": 401,
+  "badSigErr": "ROTATION_SIGNATURE_INVALID",
+  "unbound": 403,
+  "unboundErr": "ROTATION_NOT_BOUND"
+ },
+ "R12": {
+  "rotation": 200,
+  "oldPost": 403,
+  "oldPostErr": "BINDING_MISMATCH",
+  "oldRot": 403,
+  "oldRotErr": "ROTATION_NOT_BOUND",
+  "newKeyPost": 200
+ },
+ "F6_iters": 4,
+ "F6_ms": 32,
+ "F6": {
+  "a": 200,
+  "b": 200,
+  "dup": [
+   1
+  ],
+  "posts": 2,
+  "heads": 1,
+  "cas": [
+   {
+    "updated": 1,
+    "nonAtomic": true
+   },
+   {
+    "updated": 1,
+    "nonAtomic": true
+   }
+  ]
+ }
+}

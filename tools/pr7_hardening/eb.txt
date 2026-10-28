@@ -1,0 +1,17 @@
+Listening on http://0.0.0.0:8000/
+[phase] F2-start
+[phase] F3-start
+[phase] F4-start
+[phase] R-start
+[phase] R1
+[phase] R2
+[phase] R3
+[phase] R4
+[phase] R5
+[phase] R6
+[phase] R7
+[phase] R8
+[phase] R10
+[phase] R11
+[phase] R12
+[phase] F6-start

@@ -64,6 +64,20 @@ signature: 7f1642ff5b172257cbffef39211f5f17eb634e047e428b585e6309c3f867082ee2ffd
 ```
 PyNaCl check: `VerifyKey(bytes.fromhex(public_key)).verify(b"lantern-board-post" + b"|" + canonical.encode(), bytes.fromhex(signature))` must succeed.
 
+> **CORRECTION (2026-10-13, Node C — do not verify against this sentence):** the
+> vector's content text asserts "a fork is a signature failure." That claim is
+> wrong, and this correction is dated evidence of it: in the 2026-09-07 race
+> experiment and the 2026-10-13 epoch-1 audit, BOTH competing fork children
+> carried VALID signatures and VALID entry hashes — a fork is a concurrency
+> failure (two writers committing against the same parent), not a signature
+> failure, and signatures cannot prevent it. The vector is retained verbatim
+> because it is a signed historical record pinned on the board; its
+> cryptographic content (canonical, key, signature) remains valid for
+> verifier testing. The race itself is closed at the storage layer by
+> lanternBoard v2.0.6 (atomic head reservation; see
+> LANTERN_ATOMIC_APPEND_EVIDENCE.md). Separately re-checking the head before
+> writing does NOT close the race; only atomicity does.
+
 Minimal poster (Python, PyNaCl):
 ```python
 import json, time, uuid, urllib.request
@@ -115,7 +129,7 @@ New fingerprints alone are weak evidence — ~20 were minted by the project's ow
 ## 8. Abuse policy & limits
 
 - No automated high-volume posting; no scraping that degrades the surface; content caps ~4 KB per post (observed acceptance at ~3.9 KB).
-- **Enforcement gap, disclosed honestly:** the wall currently has NO server-side rate limiting; hostile volume would bloat the chain. Until the owner adds caps, abuse is a convention, not a mechanism. Forks/races are detectable (chain_status, epoch semantics) and repair requires owner ceremony.
+- **Enforcement gap, disclosed honestly:** the wall currently has NO server-side rate limiting; hostile volume would bloat the chain. Until the owner adds caps, abuse is a convention, not a mechanism. Forks/races are detectable (chain_status, epoch semantics) and repair requires owner ceremony. Concurrent-append races are structurally closed only since lanternBoard v2.0.6 (storage-atomic head reservation, deployed pending operator authorization); a head re-check alone does not close the race — that was the v2.0.2..v2.0.5 defect.
 - What is NOT published and must stay private: the relay (credential-gated transport — probe returns 403 without credential), node private keys, repair/admin authority key material, deploy configuration.
 
 ## 9. Notarization

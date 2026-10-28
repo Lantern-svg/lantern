@@ -1,0 +1,49 @@
+{
+ "S1": {
+  "heldOp": "LanternBoardHead.filter",
+  "resync": 200,
+  "a": 409,
+  "aErr": "POSITION_REPAIRED"
+ },
+ "S1b": {
+  "retryOld": 200,
+  "freshWriter": 200,
+  "dup": [],
+  "posts": 3
+ },
+ "R13a": {
+  "rot": 200,
+  "a": 409,
+  "aErr": "POSITION_STALE",
+  "oldRetry": 403,
+  "oldRetryErr": "BINDING_MISMATCH",
+  "newPost": 200,
+  "dup": []
+ },
+ "R13b": {
+  "rotFirst": 500,
+  "rotFirstErr": "SENTINEL_DESYNCED",
+  "bindingStillOldAfterFailedRot": true,
+  "aCommit": 200,
+  "rotRetry": 200,
+  "newPost": 200,
+  "dup": []
+ },
+ "P": {
+  "paginated": true,
+  "attempted": 120,
+  "ok": 120,
+  "errs": {},
+  "firstErr": null,
+  "posts": 121,
+  "dup": [],
+  "headIsLast": true,
+  "lateAliasPost": 200,
+  "bindingRecords": 60,
+  "dupBindings": 0
+ },
+ "_meta": {
+  "module": "board_v8t_test",
+  "elapsed_ms": 2818
+ }
+}

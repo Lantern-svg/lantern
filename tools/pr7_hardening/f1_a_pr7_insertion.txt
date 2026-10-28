@@ -1,0 +1,13 @@
+source=board_pr7_test schedule=a order=insertion
+writer A: node=alpha fp=dd4cc7901d3f3a54 | writer B: node=beta fp=f606b3bb8a2da0a4 | filterOrder=insertion
+P1 A blocked: pending=[LanternBoardHead.create] heads=0 posts=0
+P2 B read empty too: pending=[LanternBoardHead.create | LanternBoardHead.create]
+P3 A done: status=200 ok | posts=[{"seq":1,"node":"alpha","prev":"GENESIS"}] | heads=[{"id":"id-000001","next_seq":2,"head":"13552d001800"}]
+P4 B done: status=409 POSITION_STALE
+sentinel id=id-000001 next_seq=2 head_hash=13552d0018000814
+sentinel id=id-000004 next_seq=1 head_hash=GENESIS
+final sentinel count=2
+post node=alpha seq=1 prev=GENESIS hash=13552d0018000814
+CAS q={"board":"lantern-board","epoch":1,"next_seq":1,"head_hash":"GENESIS"} -> updated=1 targets=[id-000001]
+dup seqs=[] verify_total=1 epochs=[{"e":1,"valid":true}]
+VERDICT: HALT
