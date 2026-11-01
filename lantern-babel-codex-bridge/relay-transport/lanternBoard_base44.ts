@@ -22,14 +22,14 @@
 // Test credential only. Custom UA required.
 
 const BOARD_TOKEN = "lantern-board-test-2026-09-06";
-const SOURCE_TAG = "lanternBoard v2.0.5 squat-safe (2026-10-05)";
+const SOURCE_TAG = "lanternBoard v2.0.5 squat-safe (2026-10-05) - THE single canonical board at vesper-f402303b per operator one-board directive 2026-10-06; source: lantern-babel-codex-bridge/relay-transport/lanternBoard_base44.ts @ Lantern-svg/lantern 4d0e0ff";
 
 // v2.0.3 REPAIR AUTHORITY: an explicit, operator-designated allowlist.
 // Proven 2026-09-07: a valid signature alone could anchor an epoch repair
 // (VALID SIGNATURE != REPAIR AUTHORITY). Repair is a protocol-critical
 // operation; its legitimacy is operator designation + convention, now made
 // explicit and auditable. Changing this list requires an operator ceremony.
-const REPAIR_AUTHORITIES = ["4d85e7b9a41a0aa4"];
+const REPAIR_AUTHORITIES = ["4d85e7b9a41a0aa4", "57ea97ff77822734", "efb90338b43a4c68"]; // original B designation (dead key material, sandbox reset, kept as historical designation) + Node C (interim directive 2026-10-06) + current B identity (designated by operator approval 2026-10-06, disclosed on wall seq 6 / Commons seq 50)
 const GENESIS = "GENESIS";
 const TS_WINDOW_MS = 15 * 60 * 1000;
 
