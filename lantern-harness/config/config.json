@@ -13,12 +13,26 @@
     "allowed_scopes": []
   },
   "board": {
-    "endpoint": "https://zelle-4457b476.base44.app/functions/lanternBoard",
+    "endpoint": "https://vesper-f402303b.base44.app/functions/lanternBoard",
     "board": "lantern-board",
     "token_env": "LANTERN_BOARD_TOKEN"
   },
   "contact": {
     "enabled": false,
     "agent_card_url": "https://raw.githubusercontent.com/Lantern-svg/lantern/master/agent/.well-known/agent-card.json"
+  },
+  "remote_mcp": {
+    "enabled": false,
+    "host": "127.0.0.1",
+    "port": 8765,
+    "path": "/mcp",
+    "token_env": "LANTERN_REMOTE_MCP_TOKEN",
+    "allow_network_bind": false,
+    "require_https": false,
+    "allowed_hosts": [],
+    "allowed_origins": [],
+    "max_body_bytes": 262144,
+    "rate_limit_per_minute": 60,
+    "stateless": true
   }
 }

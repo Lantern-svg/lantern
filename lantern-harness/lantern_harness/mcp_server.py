@@ -145,6 +145,80 @@ class LanternMCPContext:
         self.permission_authority = PermissionAuthority()
 
 
+def register_contact_mcp_tools(server, ctx) -> None:
+    """Register ONLY the six read-only contact tools on an MCP server.
+
+    Shared by the stdio server (build_server) and the remote transport
+    (build_contact_server) so the remote surface can never drift from the
+    reviewed local one, and never gains a tool the local surface lacks.
+    """
+    # ---------------------------------------------------------------- contact
+    # Read-only contact tools. Each wraps ContactService, which owns the fixed
+    # endpoints, input validation, size limits, and evidence recording. None of
+    # these can post, create an identity, or read a key.
+
+    @server.tool(description=("Retrieve and validate the PUBLIC Lantern Agent Card from its fixed "
+                              "endpoint. Read-only. Reports the retrieved document, which required "
+                              "properties passed, and which failed."))
+    def lantern_contact_agent_card() -> dict:
+        return ctx.contact.agent_card()
+
+    @server.tool(description=("Send ONE validated read-only A2A request to the Lantern agent. "
+                              "Accepted forms only: 'verify board', 'hash <entry hash>', "
+                              "'collatz <positive integer>'. No URLs, methods, headers, or "
+                              "credentials are accepted."))
+    def lantern_contact_skill(text: str) -> dict:
+        return ctx.contact.skill(text)
+
+    @server.tool(description=("Read public board entries through the existing BoardClient. "
+                              "Observational: entries are labelled OBSERVED, not verified."))
+    def lantern_contact_board_read(limit: int = 10) -> dict:
+        return ctx.contact.board_read(limit=limit)
+
+    @server.tool(description=("Independently verify the public board with the existing BoardClient "
+                              "verifier: Ed25519 signature, entry-hash recomputation, chain "
+                              "linkage, fingerprint. Never returns a bare 'verified=true'."))
+    def lantern_contact_board_verify() -> dict:
+        return ctx.contact.board_verify()
+
+    @server.tool(description=("Full read-only contact workflow: validate agent card, verify board "
+                              "over A2A, read the public board, independently verify records, and "
+                              "return one structured evidence report."))
+    def lantern_contact_report(limit: int = 10) -> dict:
+        return ctx.contact.contact_report(limit=limit)
+
+    @server.tool(description=("Contact subsystem status: card/protocol/A2A/board availability, "
+                              "evidence event count, and authorization state. Distinguishes "
+                              "NOT_CONFIGURED, NOT_CONNECTED, OBSERVED, VERIFIED, BLOCKED, ERROR."))
+    def lantern_contact_status() -> dict:
+        return ctx.contact.status()
+
+
+def build_contact_server(context: Optional[LanternMCPContext] = None) -> "MCPServer":
+    """MCP server exposing ONLY the read-only contact tools.
+
+    Used by the remote (Streamable HTTP) transport. Deliberately a separate
+    server object: the remote surface must not carry branch/spine/decision
+    tools, and must not be able to acquire them by configuration.
+    """
+    if not MCP_SDK_AVAILABLE:
+        raise RuntimeError(
+            "the 'mcp' package is not installed. Install it with "
+            "`pip install lantern-harness[mcp]` to run Lantern as an MCP server."
+        )
+    ctx = context or LanternMCPContext()
+    server = MCPServer(
+        name="lantern-contact",
+        version="0.1.0",
+        description=(
+            "Read-only contact surface for the public Lantern network: agent-card "
+            "discovery, allowed A2A skills, board read, independent board "
+            "verification, contact report, and contact status. No write tools."
+        ),
+    )
+    register_contact_mcp_tools(server, ctx)
+    return server
+
 def build_server(context: Optional[LanternMCPContext] = None) -> "MCPServer":
     if not MCP_SDK_AVAILABLE:
         raise RuntimeError(
@@ -339,46 +413,7 @@ def build_server(context: Optional[LanternMCPContext] = None) -> "MCPServer":
         result["required_confidence"] = threshold
         return result
 
-    # ---------------------------------------------------------------- contact
-    # Read-only contact tools. Each wraps ContactService, which owns the fixed
-    # endpoints, input validation, size limits, and evidence recording. None of
-    # these can post, create an identity, or read a key.
-
-    @server.tool(description=("Retrieve and validate the PUBLIC Lantern Agent Card from its fixed "
-                              "endpoint. Read-only. Reports the retrieved document, which required "
-                              "properties passed, and which failed."))
-    def lantern_contact_agent_card() -> dict:
-        return ctx.contact.agent_card()
-
-    @server.tool(description=("Send ONE validated read-only A2A request to the Lantern agent. "
-                              "Accepted forms only: 'verify board', 'hash <entry hash>', "
-                              "'collatz <positive integer>'. No URLs, methods, headers, or "
-                              "credentials are accepted."))
-    def lantern_contact_skill(text: str) -> dict:
-        return ctx.contact.skill(text)
-
-    @server.tool(description=("Read public board entries through the existing BoardClient. "
-                              "Observational: entries are labelled OBSERVED, not verified."))
-    def lantern_contact_board_read(limit: int = 10) -> dict:
-        return ctx.contact.board_read(limit=limit)
-
-    @server.tool(description=("Independently verify the public board with the existing BoardClient "
-                              "verifier: Ed25519 signature, entry-hash recomputation, chain "
-                              "linkage, fingerprint. Never returns a bare 'verified=true'."))
-    def lantern_contact_board_verify() -> dict:
-        return ctx.contact.board_verify()
-
-    @server.tool(description=("Full read-only contact workflow: validate agent card, verify board "
-                              "over A2A, read the public board, independently verify records, and "
-                              "return one structured evidence report."))
-    def lantern_contact_report(limit: int = 10) -> dict:
-        return ctx.contact.contact_report(limit=limit)
-
-    @server.tool(description=("Contact subsystem status: card/protocol/A2A/board availability, "
-                              "evidence event count, and authorization state. Distinguishes "
-                              "NOT_CONFIGURED, NOT_CONNECTED, OBSERVED, VERIFIED, BLOCKED, ERROR."))
-    def lantern_contact_status() -> dict:
-        return ctx.contact.status()
+    register_contact_mcp_tools(server, ctx)
 
     return server
 
