@@ -14,6 +14,16 @@ Closeout fixes (2026-10-09 directive):
      cannot be secured the tool fails safely instead of using it.
   3. The admission token lives ONLY in the LANTERN_TOKEN environment
      variable. No literal token appears in this source or in any error path.
+
+Security fix (2026-11-02, evidence: EVIDENCE_REPORT_BOARD_RACE_CONDITION.md
+review / local MCP candidate reconciliation):
+  4. lantern_post_signed previously gated ONLY on LANTERN_TOKEN being set.
+     If that variable was present in the environment for any reason
+     (inherited shell, another tool, accidental export) the server would
+     post to the live board with no separate signal that posting was
+     actually intended. Posting now ALSO requires an explicit
+     LANTERN_ALLOW_BOARD_POST=1 opt-in, checked in addition to (never
+     instead of) LANTERN_TOKEN. Missing either one fails closed.
 """
 
 import sys, json, time, uuid, os, stat, urllib.request, urllib.error
@@ -22,6 +32,7 @@ from nacl.signing import SigningKey
 
 API_URL = os.environ.get("LANTERN_BOARD_URL", "https://vesper-f402303b.base44.app/functions/lanternBoard")
 TOKEN = os.environ.get("LANTERN_TOKEN", "")
+ALLOW_POST = os.environ.get("LANTERN_ALLOW_BOARD_POST") == "1"
 BOARD = "lantern-board"
 KEY_FILE = Path(os.environ.get("LANTERN_KEY_FILE", str(Path.home() / ".lantern" / "mcp_key.json")))
 
@@ -107,6 +118,8 @@ def handle_call_tool(params):
         return {"content": [{"type": "text", "text": json.dumps(res, indent=2)}]}
 
     if name == "lantern_post_signed":
+        if not ALLOW_POST:
+            return {"isError": True, "content": [{"type": "text", "text": "Posting is disabled: set LANTERN_ALLOW_BOARD_POST=1 in the server's own environment to enable lantern_post_signed. This is a separate, explicit opt-in -- LANTERN_TOKEN being set is not sufficient on its own."}]}
         if not TOKEN:
             return {"isError": True, "content": [{"type": "text", "text": "LANTERN_TOKEN is not set. Obtain the admission token from the board operator's distribution and set it in the server environment."}]}
         sk, default_nid, default_pk = get_or_create_key()
