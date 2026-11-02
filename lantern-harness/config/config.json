@@ -16,5 +16,9 @@
     "endpoint": "https://zelle-4457b476.base44.app/functions/lanternBoard",
     "board": "lantern-board",
     "token_env": "LANTERN_BOARD_TOKEN"
+  },
+  "contact": {
+    "enabled": false,
+    "agent_card_url": "https://raw.githubusercontent.com/Lantern-svg/lantern/master/agent/.well-known/agent-card.json"
   }
 }

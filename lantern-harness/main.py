@@ -27,7 +27,7 @@ from lantern_harness.operating_loop import OperatingLoop
 from lantern_harness.transfer_manifest import build_manifest
 from lantern_harness.permission_authority import PermissionAuthority, CAPABILITY_CATEGORIES
 
-COMMANDS = ("/memory", "/history", "/beliefs", "/evidence", "/branches", "/identity", "/tools", "/projects", "/status", "/compile", "/decide", "/self", "/branch", "/spine", "/run", "/transfer", "/permissions", "/grant", "/revoke", "/new", "/exit")
+COMMANDS = ("/memory", "/history", "/beliefs", "/evidence", "/branches", "/identity", "/tools", "/projects", "/status", "/compile", "/decide", "/self", "/branch", "/spine", "/run", "/transfer", "/permissions", "/grant", "/revoke", "/new", "/contact", "/exit")
 
 SYSTEM_PROMPT_PATH = Path(__file__).resolve().parent / "prompts" / "system.md"
 
@@ -39,6 +39,34 @@ def load_system_prompt():
 
 
 def handle_command(command: str, bridge, engine, tool_boundary) -> str:
+    if command.startswith("/contact"):
+        import json as _json
+        from lantern_harness.config import load_config, board_config
+        from lantern_harness.contact import ContactService
+        from lantern_harness.board.client import BoardClient
+
+        cfg = load_config()
+        contact_cfg = (cfg or {}).get("contact") or {}
+        client = None
+        if board_config(cfg):
+            client = BoardClient(
+                endpoint=cfg["board"]["endpoint"], board=cfg["board"]["board"],
+                node_id=cfg["board"].get("node_id", "lantern-harness-node"),
+                token_env=cfg["board"].get("token_env", "LANTERN_BOARD_TOKEN"),
+            )
+        service = ContactService(
+            bridge=bridge, board_client=client,
+            card_url=contact_cfg.get("agent_card_url",
+                "https://raw.githubusercontent.com/Lantern-svg/lantern/master/agent/.well-known/agent-card.json"),
+            enabled=True,  # an explicit human typing /contact is the opt-in
+        )
+        argument = command[len("/contact"):].strip()
+        if argument == "report":
+            return _json.dumps(service.contact_report(), indent=2)
+        if argument not in ("", "status"):
+            return "usage: /contact [status|report] -- read-only contact with the public Lantern network"
+        return _json.dumps(service.status(), indent=2)
+
     if command == "/status":
         report = status_report(bridge, engine, tool_boundary)
         return format_status_report(report)

@@ -84,6 +84,13 @@ class LanternMCPContext:
         from .board.tools import register_board_tools
         self._board_client = None
         cfg = load_config()
+        # Loop must exist before any block that updates its scopes: the
+        # board section below calls self.loop.allowed_scopes.update(...).
+        from .decision_gate import load_tool_policy
+        _policy = load_tool_policy(cfg)
+        self.loop = OperatingLoop(self.bridge, self.tool_boundary,
+                                  required_confidence=_policy["required_confidence"],
+                                  allowed_scopes=_policy["allowed_scopes"])
         if board_config(cfg):
             self._board_client = BoardClient(
                 endpoint=cfg["board"]["endpoint"], board=cfg["board"]["board"],
@@ -104,16 +111,37 @@ class LanternMCPContext:
             if _os.environ.get("LANTERN_ALLOW_BOARD_POST") == "1":
                 self.tool_boundary.authorize("board_post")
                 self.loop.allowed_scopes.add("board.post")
+
+        # Contact (read-only): discovery, query, retrieval, and independent
+        # verification of the public Lantern network. Tools are registered so
+        # they are DISCOVERABLE, but authorization is an explicit operator act
+        # (contact.enabled in config, or LANTERN_CONTACT_ENABLED=1). No contact
+        # tool writes, posts, creates identities, or touches keys.
+        import os as _contact_os
+        from .contact import ContactService, register_contact_tools, CONTACT_TOOL_NAMES, SCOPE_CONTACT_READ
+        from .contact.agent_card import AGENT_CARD_URL as _DEFAULT_CARD_URL
+        _contact_cfg = (cfg or {}).get("contact") or {}
+        self.contact_enabled = (
+            bool(_contact_cfg.get("enabled"))
+            or _contact_os.environ.get("LANTERN_CONTACT_ENABLED") == "1"
+        )
+        self.contact = ContactService(
+            bridge=self.bridge,
+            board_client=self._board_client,
+            card_url=_contact_cfg.get("agent_card_url", _DEFAULT_CARD_URL),
+            enabled=self.contact_enabled,
+        )
+        register_contact_tools(self.tool_boundary, self.contact)
+        if self.contact_enabled:
+            for _tool_name in CONTACT_TOOL_NAMES:
+                self.tool_boundary.authorize(_tool_name)
+            self.loop.allowed_scopes.add(SCOPE_CONTACT_READ)
+
         self.compiler = PromptCompiler(bridge=self.bridge)
         self.confidence_field = ConfidenceField(bridge=self.bridge)
         self.decision_machine = DecisionStateMachine()
         self.branch_store = BranchStore()
         self.spine_committer = SpineCommitter(self.bridge)
-        from .decision_gate import load_tool_policy
-        _policy = load_tool_policy(cfg)
-        self.loop = OperatingLoop(self.bridge, self.tool_boundary,
-                                  required_confidence=_policy["required_confidence"],
-                                  allowed_scopes=_policy["allowed_scopes"])
         self.permission_authority = PermissionAuthority()
 
 
@@ -310,6 +338,47 @@ def build_server(context: Optional[LanternMCPContext] = None) -> "MCPServer":
         result["evidence_confidence"] = evidence_confidence
         result["required_confidence"] = threshold
         return result
+
+    # ---------------------------------------------------------------- contact
+    # Read-only contact tools. Each wraps ContactService, which owns the fixed
+    # endpoints, input validation, size limits, and evidence recording. None of
+    # these can post, create an identity, or read a key.
+
+    @server.tool(description=("Retrieve and validate the PUBLIC Lantern Agent Card from its fixed "
+                              "endpoint. Read-only. Reports the retrieved document, which required "
+                              "properties passed, and which failed."))
+    def lantern_contact_agent_card() -> dict:
+        return ctx.contact.agent_card()
+
+    @server.tool(description=("Send ONE validated read-only A2A request to the Lantern agent. "
+                              "Accepted forms only: 'verify board', 'hash <entry hash>', "
+                              "'collatz <positive integer>'. No URLs, methods, headers, or "
+                              "credentials are accepted."))
+    def lantern_contact_skill(text: str) -> dict:
+        return ctx.contact.skill(text)
+
+    @server.tool(description=("Read public board entries through the existing BoardClient. "
+                              "Observational: entries are labelled OBSERVED, not verified."))
+    def lantern_contact_board_read(limit: int = 10) -> dict:
+        return ctx.contact.board_read(limit=limit)
+
+    @server.tool(description=("Independently verify the public board with the existing BoardClient "
+                              "verifier: Ed25519 signature, entry-hash recomputation, chain "
+                              "linkage, fingerprint. Never returns a bare 'verified=true'."))
+    def lantern_contact_board_verify() -> dict:
+        return ctx.contact.board_verify()
+
+    @server.tool(description=("Full read-only contact workflow: validate agent card, verify board "
+                              "over A2A, read the public board, independently verify records, and "
+                              "return one structured evidence report."))
+    def lantern_contact_report(limit: int = 10) -> dict:
+        return ctx.contact.contact_report(limit=limit)
+
+    @server.tool(description=("Contact subsystem status: card/protocol/A2A/board availability, "
+                              "evidence event count, and authorization state. Distinguishes "
+                              "NOT_CONFIGURED, NOT_CONNECTED, OBSERVED, VERIFIED, BLOCKED, ERROR."))
+    def lantern_contact_status() -> dict:
+        return ctx.contact.status()
 
     return server
 

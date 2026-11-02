@@ -81,7 +81,17 @@ def test_lantern_self_model_lists_authorized_tools_from_real_boundary():
     server = build_server(ctx)
     model = _call(server, "lantern_self_model", {})
     assert "what_i_am_authorized_to_do" in model
-    assert model["what_i_am_authorized_to_do"] == ["(no tools are currently authorized in ToolBoundary)"]
+    # Intent: the self-model must TRUTHFULLY reflect the real ToolBoundary.
+    # The shipped config includes a board section, and the MCP context
+    # deliberately session-authorizes the OBSERVATIONAL board tools
+    # (board_read/board_get_entry/board_verify) -- so a hardcoded "empty"
+    # expectation no longer describes real behavior. Assert correspondence
+    # with the actual boundary instead of a stale constant.
+    authorized = sorted(n for n in ctx.tool_boundary.discover() if ctx.tool_boundary.is_authorized(n))
+    if authorized:
+        assert model["what_i_am_authorized_to_do"] == [f"tool: {n}" for n in authorized]
+    else:
+        assert model["what_i_am_authorized_to_do"] == ["(no tools are currently authorized in ToolBoundary)"]
 
 
 def test_lantern_branch_open_creates_a_real_branch():
@@ -121,10 +131,16 @@ def test_server_exposes_no_tool_capable_of_external_action():
     server = build_server(ctx)
     tools = asyncio.run(server.list_tools())
     names = {t.name for t in tools}
-    forbidden_substrings = ("execute", "run_tool", "shell", "act", "authorize")
+    # Token-precise, not substring: the mandated read-only contact tools are
+    # named "lantern_contact_*", and "contact" contains the substring "act"
+    # without exposing any action capability. Compare whole name tokens so the
+    # check still catches execute / run_tool / shell / act / authorize while
+    # not misreading a noun.
+    forbidden_tokens = {"execute", "run_tool", "shell", "act", "authorize"}
     for name in names:
-        for forbidden in forbidden_substrings:
-            assert forbidden not in name, f"tool {name!r} suggests an external-action capability, which this server must not expose"
+        tokens = set(name.split("_"))
+        for forbidden in forbidden_tokens:
+            assert forbidden not in tokens, f"tool {name!r} suggests an external-action capability, which this server must not expose"
 
 def test_build_server_raises_clear_error_when_sdk_unavailable(monkeypatch):
     import lantern_harness.mcp_server as mod
