@@ -131,13 +131,22 @@ def test_live_table_names_only_onchain_shape_rows():
 
 
 class _FakeTransportBoard:
-    """BoardClient with the HTTP transport stubbed to serve fixed entries."""
+    """BoardClient with the HTTP transport stubbed to serve fixed entries.
+    action=verify (board self-attestation) is stubbed separately via
+    `verify_response`; None means the board's analyze() is unreachable."""
 
-    def __init__(self, entries):
-        from lantern_harness.board.client import BoardClient
+    def __init__(self, entries, verify_response=None):
+        from lantern_harness.board.client import BoardClient, BoardClientError
         self.client = BoardClient(endpoint="https://example.invalid/board",
                                   board="test-board")
         self.client._list_entries = lambda: [dict(e) for e in entries]
+
+        def fake_call(payload):
+            if payload.get("action") == "verify" and verify_response is not None:
+                return dict(verify_response)
+            raise BoardClientError("transport stubbed out in tests")
+
+        self.client._call = fake_call
 
 
 def test_verify_entry_whole_board_reports_chain_and_downgrades():
@@ -164,3 +173,61 @@ def test_single_entry_verify_pins_head():
     assert result["head"]["entry_hash"] == H[4]
     assert result["source"] == "https://example.invalid/board"
     assert result["retrieved_at_ms"] > 0
+
+
+def test_board_analysis_unreachable_degrades_to_blocked_block():
+    fake = _FakeTransportBoard(_linear(3))
+    result = fake.client.verify_entry(known_anomalies=[])
+    assert result["board_analysis"]["status"] == "BLOCKED"
+    # independent verification still ran
+    assert result["checked"] == 3 and result["head"] is not None
+
+
+def _board_verify_response(latest_valid, first_break=None):
+    return {"ok": True, "total": 5,
+            "epochs": [
+                {"epoch": 1, "posts": 3, "valid": True, "first_break": None,
+                 "head": H[3], "anchor_valid": True},
+                {"epoch": 2, "posts": 2, "valid": latest_valid,
+                 "first_break": first_break, "head": H[5], "anchor_valid": True}],
+            "authoritative_epoch": 2, "authoritative_head": H[5],
+            "canonical_epoch": 1 if not latest_valid else 2,
+            "canonical_head": H[3] if not latest_valid else H[5]}
+
+
+def test_authoritative_unresolved_adopted_when_latest_epoch_forked():
+    forked = _board_verify_response(
+        latest_valid=False,
+        first_break={"type": "fork", "at_parent": "p1",
+                     "children": [{"post_id": "a"}, {"post_id": "b"}]})
+    fake = _FakeTransportBoard(_linear(3), verify_response=forked)
+    result = fake.client.verify_entry(known_anomalies=[])
+    ba = result["board_analysis"]
+    assert ba["authoritative_state"] == "AUTHORITATIVE_UNRESOLVED"
+    assert ba["authoritative_head"] is None, \
+        "never a head from an ambiguous lineage"
+    assert ba["fork"]["type"] == "fork"
+    assert ba["canonical_epoch"] == 1 and ba["canonical_head"] == H[3]
+    # the verify result itself refuses to emit a single head
+    assert result["head"] is None
+    assert result["authoritative_state"] == "AUTHORITATIVE_UNRESOLVED"
+    assert result["status"] not in (CORROBORATED,)
+
+
+def test_authoritative_ok_when_latest_epoch_valid():
+    fake = _FakeTransportBoard(_linear(3),
+                               verify_response=_board_verify_response(latest_valid=True))
+    result = fake.client.verify_entry(known_anomalies=[])
+    ba = result["board_analysis"]
+    assert ba["authoritative_state"] == "AUTHORITATIVE_OK"
+    assert ba["authoritative_head"] == H[5]
+    assert result["head"] is not None
+
+
+def test_non_fork_break_keeps_existing_reporting():
+    tampered = _board_verify_response(
+        latest_valid=False, first_break={"type": "tamper", "post_id": "x"})
+    fake = _FakeTransportBoard(_linear(3), verify_response=tampered)
+    ba = fake.client.verify_entry(known_anomalies=[])["board_analysis"]
+    assert ba["authoritative_state"] == "AUTHORITATIVE_OK"
+    assert ba["authoritative_head"] == H[5]

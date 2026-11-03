@@ -225,6 +225,10 @@ class ContactService:
                 "source": (result or {}).get("source"),
                 "retrieved_at_ms": (result or {}).get("retrieved_at_ms"),
                 "chain": (result or {}).get("chain"),
+                # The board's own production analyze() (self-attestation),
+                # with AUTHORITATIVE_UNRESOLVED adopted on the read side.
+                "authoritative_state": (result or {}).get("authoritative_state"),
+                "board_analysis": (result or {}).get("board_analysis"),
                 "summary": verification_summary, "verification": result,
                 "evidence_label": record.label}
 

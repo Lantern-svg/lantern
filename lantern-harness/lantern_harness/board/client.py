@@ -189,6 +189,46 @@ class BoardClient:
         }
 
     # ------------------------------------------------------------------ verify
+    def board_analysis(self) -> dict:
+        """The board's OWN chain analysis via action=verify (lanternBoard
+        analyze(): epochs with valid/first_break/head, authoritative and
+        canonical epoch+head). This is board self-attestation -- OBSERVED,
+        never an independent check -- but it is the production fork
+        detector, so the contact verifier must expose rather than shadow it.
+
+        Adopts AUTHORITATIVE_UNRESOLVED from BOARD_FORK_RESOLUTION.md on
+        the read side: when the LATEST epoch is not valid and its
+        first_break is a fork, authoritative_head is reported as None
+        (never a head from an ambiguous lineage) and authoritative_state
+        is AUTHORITATIVE_UNRESOLVED, with the fork's details carried
+        verbatim. Non-fork breaks keep the board's existing reporting.
+        """
+        resp = self._call({"action": "verify", "board": self.board})
+        epochs = resp.get("epochs") or []
+        latest = epochs[-1] if epochs else None
+        state = "AUTHORITATIVE_OK"
+        fork = None
+        authoritative_head = resp.get("authoritative_head")
+        first_break = (latest or {}).get("first_break") or {}
+        if latest is not None and not latest.get("valid") and first_break.get("type") == "fork":
+            state = "AUTHORITATIVE_UNRESOLVED"
+            authoritative_head = None  # a single head on a forked chain is a lie of omission
+            fork = first_break
+        return {
+            "status": OBSERVED,
+            "total": resp.get("total"),
+            "epochs": epochs,
+            "authoritative_state": state,
+            "authoritative_epoch": resp.get("authoritative_epoch"),
+            "authoritative_head": authoritative_head,
+            "canonical_epoch": resp.get("canonical_epoch"),
+            "canonical_head": resp.get("canonical_head"),
+            **({"fork": fork} if fork else {}),
+            "note": ("board self-attestation via action=verify (production analyze()); "
+                     "OBSERVED, not an independent check. AUTHORITATIVE_UNRESOLVED "
+                     "semantics per BOARD_FORK_RESOLUTION.md adopted on the read side."),
+        }
+
     def verify_entry(self, entry_id: Optional[str] = None,
                      known_anomalies: Optional[list] = None) -> dict:
         """Real, offline verification of one entry (or the whole board
@@ -207,6 +247,13 @@ class BoardClient:
         if entry_id is None:
             reports = [self._verify_one(p, entries, by_id) for p in entries]
             chain = analyze_chain(entries, known_anomalies=known_anomalies)
+            # The board's own production fork detector, exposed not shadowed.
+            # Its failure must not sink independent verification: it degrades
+            # to a BLOCKED block, never an exception.
+            try:
+                board_analysis = self.board_analysis()
+            except BoardClientError as exc:
+                board_analysis = {"status": BLOCKED, "detail": str(exc)[:300]}
             per_entry_status = _weakest(r["status"] for r in reports) if reports else UNKNOWN
             unexplained = [a for a in chain["anomalies"] if a["classification"] == UNEXPLAINED]
             status = per_entry_status
@@ -215,15 +262,23 @@ class BoardClient:
                 # unexplained anomaly; per-entry results stay reported
                 # separately and unchanged below.
                 status = _weakest([per_entry_status, UNKNOWN])
+            head = chain["head"]
+            if board_analysis.get("authoritative_state") == "AUTHORITATIVE_UNRESOLVED":
+                # Never emit a single head from an ambiguous lineage
+                # (BOARD_FORK_RESOLUTION.md replacement invariant).
+                head = None
+                status = _weakest([status, UNKNOWN])
             return {
                 "status": status,
                 "per_entry_status": per_entry_status,
+                "authoritative_state": board_analysis.get("authoritative_state"),
                 "board": self.board,
                 "source": self.endpoint,
                 "retrieved_at_ms": int(time.time() * 1000),
                 "checked": len(reports),
-                "head": chain["head"],
+                "head": head,
                 "chain": chain,
+                "board_analysis": board_analysis,
                 "entries": reports,
                 "note": ("per-entry states are proven claims, not board self-attestation; "
                          "top-level status is CORROBORATED only with zero UNEXPLAINED chain anomalies"),
