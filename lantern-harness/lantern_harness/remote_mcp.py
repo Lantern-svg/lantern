@@ -45,6 +45,7 @@ class RemoteMCPConfig:
     port: int = 8765
     path: str = DEFAULT_PATH
     token_env: str = DEFAULT_TOKEN_ENV
+    no_auth: bool = False  # explicit operator choice; loopback only, warns loudly
     allow_network_bind: bool = False
     require_https: bool = False
     allowed_hosts: list = field(default_factory=list)
@@ -62,6 +63,7 @@ class RemoteMCPConfig:
             port=int(section.get("port", 8765)),
             path=str(section.get("path", DEFAULT_PATH)),
             token_env=str(section.get("token_env", DEFAULT_TOKEN_ENV)),
+            no_auth=bool(section.get("no_auth", False)),
             allow_network_bind=bool(section.get("allow_network_bind", False)),
             require_https=bool(section.get("require_https", False)),
             allowed_hosts=list(section.get("allowed_hosts") or []),
@@ -94,6 +96,9 @@ class RemoteMCPConfig:
                     "(terminate TLS at a reverse proxy and forward X-Forwarded-Proto)")
         if not self.token_env:
             raise RemoteMCPConfigError("remote_mcp.token_env must name an environment variable")
+        if self.no_auth and self.host not in LOOPBACK_HOSTS:
+            raise RemoteMCPConfigError(
+                "no-auth mode is loopback-only; refusing to disable authentication on %r" % self.host)
 
 
 # --------------------------------------------------------------------- auth
@@ -223,6 +228,34 @@ class RequestTooLarge(Exception):
 
 # --------------------------------------------------------------------- app
 
+
+# The public contract of the remote surface. If anything else is ever
+# registered, the remote app refuses to build.
+CONTACT_MCP_TOOL_NAMES = (
+    "lantern_contact_agent_card",
+    "lantern_contact_skill",
+    "lantern_contact_board_read",
+    "lantern_contact_board_verify",
+    "lantern_contact_report",
+    "lantern_contact_status",
+)
+
+
+def _assert_only_contact_tools(server) -> None:
+    """Refuse to serve anything other than the six read-only contact tools."""
+    import asyncio
+
+    tools = asyncio.run(server.list_tools())
+    names = tuple(sorted(t.name for t in tools))
+    expected = tuple(sorted(CONTACT_MCP_TOOL_NAMES))
+    if names != expected:
+        extra = sorted(set(names) - set(expected))
+        missing = sorted(set(expected) - set(names))
+        raise RemoteMCPConfigError(
+            "remote surface must expose exactly the six contact tools; "
+            "extra=%s missing=%s" % (extra, missing))
+
+
 def build_remote_app(context=None, cfg: RemoteMCPConfig | None = None):
     """Return the ASGI app for the remote contact surface.
 
@@ -237,12 +270,21 @@ def build_remote_app(context=None, cfg: RemoteMCPConfig | None = None):
     cfg.validate()
     if not cfg.enabled:
         raise RemoteMCPConfigError("remote_mcp.enabled is false; refusing to build the remote app")
-    if not os.environ.get(cfg.token_env):
-        raise RemoteMCPConfigError(
-            "environment variable %s is not set; refusing to start unauthenticated" % cfg.token_env)
-
-    auth = RemoteAuth(cfg.token_env)
-    auth.expected()  # fail fast on a weak/missing token
+    if cfg.no_auth:
+        # Owner's explicit choice (two-step, per decision B). Loud, and only ever
+        # legal on loopback because validate() refuses anything else.
+        print(json.dumps({
+            "WARNING": "AUTHENTICATION DISABLED (no_auth)",
+            "detail": ("read-only contact surface exposed without credentials; "
+                       "loopback only; suitable for a temporary tunnel test only"),
+            "host": cfg.host, "port": cfg.port, "path": cfg.path}), flush=True)
+        auth = None
+    else:
+        if not os.environ.get(cfg.token_env):
+            raise RemoteMCPConfigError(
+                "environment variable %s is not set; refusing to start unauthenticated" % cfg.token_env)
+        auth = RemoteAuth(cfg.token_env)
+        auth.expected()  # fail fast on a weak/missing token
 
     # The remote surface exists only after an explicit operator decision plus a
     # token. Enabling the contact read path here is therefore not an implicit
@@ -252,7 +294,12 @@ def build_remote_app(context=None, cfg: RemoteMCPConfig | None = None):
         from .mcp_server import LanternMCPContext
         context = LanternMCPContext()
         context.contact.enabled = True
+        # Remote reads must not append Observations to the local evidence store:
+        # the remote surface formats and returns, it does not store. (Directive
+        # condition 2: contact_report must never write, post, send, or store.)
+        context.contact.bridge = None
     server = build_contact_server(context)
+    _assert_only_contact_tools(server)
     security = TransportSecuritySettings(
         enable_dns_rebinding_protection=bool(cfg.allowed_hosts or cfg.allowed_origins),
         allowed_hosts=cfg.allowed_hosts or [],
@@ -269,7 +316,8 @@ def build_remote_app(context=None, cfg: RemoteMCPConfig | None = None):
 
     # Outermost first: rate limit -> auth -> body limit -> MCP app.
     app = BodyLimitMiddleware(app, cfg.max_body_bytes)
-    app = AuthMiddleware(app, auth, require_https=cfg.require_https)
+    if auth is not None:
+        app = AuthMiddleware(app, auth, require_https=cfg.require_https)
     app = RateLimitMiddleware(app, cfg.rate_limit_per_minute)
     return app
 
@@ -282,9 +330,15 @@ def main(argv=None) -> int:
 
     parser = argparse.ArgumentParser(prog="lantern-harness-mcp-remote")
     parser.add_argument("--check", action="store_true", help="validate configuration and exit")
+    parser.add_argument(
+        "--no-auth", action="store_true",
+        help="DISABLE authentication for this run (operator decision; loopback only; "
+             "prints a warning). Off by default and never persisted to config.")
     args = parser.parse_args(argv)
 
     cfg = RemoteMCPConfig.from_config(load_config())
+    if args.no_auth:
+        cfg.no_auth = True
     try:
         cfg.validate()
         if not cfg.enabled:
