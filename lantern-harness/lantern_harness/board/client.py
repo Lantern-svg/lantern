@@ -336,15 +336,19 @@ class BoardClient:
             checks["linkage"] = {"state": UNKNOWN,
                                  "detail": "predecessor not present in the retrieved board slice"}
 
-        # check 4: fingerprint (reported with method; match state only if computable)
+        # check 4: fingerprint (board convention: sha256 over the lowercase
+        # HEX STRING of the key, sha256(key_hex.encode()); NOT over the raw
+        # key bytes. Node C's seq 91 flag: the raw-bytes convention made every
+        # author appear under two fingerprints.)
         pub = str(entry.get("public_key") or "")
         if pub:
             try:
-                fp = hashlib.sha256(bytes.fromhex(pub)).hexdigest()
+                bytes.fromhex(pub)  # still validate the key is real hex
+                fp = hashlib.sha256(pub.lower().encode("utf-8")).hexdigest()
                 checks["fingerprint"] = {
                     "state": CLAIMED,
-                    "detail": f"sha256(public_key)={fp[:16]}...; author identity binding is "
-                              f"claimed by the entry, not proven by this check",
+                    "detail": f"sha256(public_key hex string)={fp[:16]}... (board convention); "
+                              f"author identity binding is claimed by the entry, not proven by this check",
                 }
             except ValueError:
                 checks["fingerprint"] = {"state": DISPROVEN, "detail": "public_key is not valid hex"}
@@ -599,7 +603,9 @@ def _public_entry(entry: dict, state: str) -> dict:
         "message_id": str(entry.get("message_id")),
         "board": str(entry.get("board")),
         "node_id": str(entry.get("node_id")),
-        "fingerprint": hashlib.sha256(bytes.fromhex(str(entry.get("public_key") or "00"))).hexdigest()[:16]
+        # Board-convention fingerprint: sha256 over the key's HEX STRING
+        # (matches what the board itself and its bindings store report).
+        "fingerprint": hashlib.sha256(str(entry.get("public_key")).lower().encode("utf-8")).hexdigest()[:16]
                        if entry.get("public_key") else None,
         "content": str(entry.get("content")),
         "created_ms": entry.get("created_ms"),

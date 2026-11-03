@@ -209,7 +209,7 @@ def build_contact_server(context: Optional[LanternMCPContext] = None) -> "MCPSer
     ctx = context or LanternMCPContext()
     server = MCPServer(
         name="lantern-contact",
-        version="0.2.0",
+        version="0.2.1",
         description=(
             "Read-only contact surface for the public Lantern network: agent-card "
             "discovery, allowed A2A skills, board read, independent board "
@@ -228,7 +228,7 @@ def build_server(context: Optional[LanternMCPContext] = None) -> "MCPServer":
     ctx = context or LanternMCPContext()
     server = MCPServer(
         name="lantern-harness",
-        version="0.2.0",
+        version="0.2.1",
         description=(
             "Auditable evidence/belief tools from the Lantern harness: "
             "observation, evidence linkage, confidence reading, decision "
