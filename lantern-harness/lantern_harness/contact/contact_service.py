@@ -19,6 +19,7 @@ from .models import (
     ERROR,
     NOT_CONFIGURED,
     NOT_CONNECTED,
+    NOT_PROBED,
     OBSERVED,
     UNKNOWN,
     VERIFIED,
@@ -208,6 +209,7 @@ class ContactService:
             "checked": self._last_verify.get("checked"),
             "states": histogram,
             "non_passing": failing[:10],
+            "unexplained_chain_anomalies": (self._last_verify.get("chain") or {}).get("unexplained_count"),
         }
         record = make_evidence(
             "board_verify", label, BOARD_VERIFY_SOURCE,
@@ -217,28 +219,41 @@ class ContactService:
         )
         self._record(record)
         return {"status": state or UNKNOWN, "checked": (result or {}).get("checked"),
+                # BUG-2 fix: pin what was verified so one result is citable
+                # on its own and comparable against an external head witness.
+                "head": (result or {}).get("head"),
+                "source": (result or {}).get("source"),
+                "retrieved_at_ms": (result or {}).get("retrieved_at_ms"),
+                "chain": (result or {}).get("chain"),
                 "summary": verification_summary, "verification": result,
                 "evidence_label": record.label}
 
     # ---------------------------------------------------------------- status
     def status(self) -> dict[str, Any]:
+        # Pre-probe subsystems report NOT_PROBED (a component state meaning
+        # "no check has run yet"), never UNKNOWN: UNKNOWN is an evidence
+        # label for a check that ran and could not decide.
         return {
             "enabled": bool(self.enabled),
             "agent_card": {
                 "url": self.card_url,
-                "state": (self._last_card.label if self._last_card else UNKNOWN),
+                "state": (self._last_card.label if self._last_card else NOT_PROBED),
             },
             "a2a": {
                 "endpoint": getattr(self.a2a, "endpoint", A2A_ENDPOINT),
                 "state": OBSERVED if any(e["operation"] == "a2a_skill" and e["label"] == OBSERVED
-                                         for e in self.evidence) else UNKNOWN,
+                                         for e in self.evidence) else NOT_PROBED,
             },
             "board": {
                 "configured": self.board_client is not None,
-                "state": (self._last_verify or {}).get("state", UNKNOWN) if self.board_client else NOT_CONFIGURED,
+                "state": ((self._last_verify or {}).get("status") or NOT_PROBED)
+                         if self.board_client else NOT_CONFIGURED,
             },
             "evidence_events": len(self.evidence),
-            "authorization": "read-only: no post, no identity creation, no key access",
+            # Named access_mode, not "authorization": some hosts redact any
+            # field with that name, and this string must read identically to
+            # every caller.
+            "access_mode": "read-only: no post, no identity creation, no key access",
             "write_tools_registered": False,
         }
 

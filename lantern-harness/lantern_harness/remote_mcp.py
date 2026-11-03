@@ -226,6 +226,49 @@ class RequestTooLarge(Exception):
     pass
 
 
+class GetRoutesMiddleware:
+    """Read-only GET routes for browse-only AI clients: /verify, /board?limit=N,
+    /status. Each returns the SAME JSON the corresponding MCP tool returns,
+    produced by the same ContactService methods. GET requests carry no body
+    and can trigger no write: the service has no write path at all. These
+    routes sit inside the rate-limit and (when enabled) auth middlewares."""
+
+    ROUTES = ("/verify", "/board", "/status")
+
+    def __init__(self, app, contact_service):
+        self.app = app
+        self.contact = contact_service
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http" or scope.get("method") != "GET" \
+                or scope.get("path") not in self.ROUTES:
+            return await self.app(scope, receive, send)
+        path = scope["path"]
+        try:
+            if path == "/verify":
+                body = self.contact.board_verify()
+            elif path == "/status":
+                body = self.contact.status()
+            else:  # /board
+                from urllib.parse import parse_qs
+                query = parse_qs((scope.get("query_string") or b"").decode("latin-1"))
+                raw = (query.get("limit") or ["10"])[0]
+                try:
+                    limit = int(raw)
+                except ValueError:
+                    return await _json_response(400, {"error": "BAD_LIMIT",
+                                                      "detail": "limit must be an integer in [1, 100]"})(scope, receive, send)
+                if limit < 1 or limit > 100:
+                    return await _json_response(400, {"error": "BAD_LIMIT",
+                                                      "detail": "limit must be an integer in [1, 100]"})(scope, receive, send)
+                body = self.contact.board_read(limit=limit)
+        except Exception as exc:  # noqa: BLE001 - surface as JSON, never a stack trace
+            logger.warning("GET route %s failed: %s", path, exc)
+            return await _json_response(502, {"error": "UPSTREAM_FAILED",
+                                              "detail": str(exc)[:300]})(scope, receive, send)
+        return await _json_response(200, body)(scope, receive, send)
+
+
 # --------------------------------------------------------------------- app
 
 
@@ -300,6 +343,7 @@ def build_remote_app(context=None, cfg: RemoteMCPConfig | None = None):
         context.contact.bridge = None
     server = build_contact_server(context)
     _assert_only_contact_tools(server)
+    contact_service = context.contact
     security = TransportSecuritySettings(
         enable_dns_rebinding_protection=bool(cfg.allowed_hosts or cfg.allowed_origins),
         allowed_hosts=cfg.allowed_hosts or [],
@@ -314,7 +358,10 @@ def build_remote_app(context=None, cfg: RemoteMCPConfig | None = None):
         host=cfg.host,
     )
 
-    # Outermost first: rate limit -> auth -> body limit -> MCP app.
+    # Outermost first: rate limit -> auth -> body limit -> GET routes -> MCP app.
+    # GET routes answer only /verify, /board, /status and reuse the exact
+    # ContactService the tools use; everything else falls through to MCP.
+    app = GetRoutesMiddleware(app, contact_service)
     app = BodyLimitMiddleware(app, cfg.max_body_bytes)
     if auth is not None:
         app = AuthMiddleware(app, auth, require_https=cfg.require_https)

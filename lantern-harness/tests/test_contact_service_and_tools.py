@@ -157,10 +157,17 @@ def test_report_stops_honestly_when_card_fails():
 def test_status_is_honest_before_any_contact():
     service = ContactService(enabled=True, board_client=FakeBoard())
     status = service.status()
-    assert status["agent_card"]["state"] == UNKNOWN
+    # Pre-probe state is NOT_PROBED, never UNKNOWN: UNKNOWN is reserved for
+    # a check that ran and could not decide.
+    assert status["agent_card"]["state"] == "NOT_PROBED"
+    assert status["a2a"]["state"] == "NOT_PROBED"
+    assert status["board"]["state"] == "NOT_PROBED"
     assert status["board"]["configured"] is True
     assert status["write_tools_registered"] is False
-    assert "read-only" in status["authorization"]
+    # Named access_mode (not "authorization") so host-side redaction of
+    # auth-named fields cannot hide it from any caller.
+    assert "read-only" in status["access_mode"]
+    assert "authorization" not in status
 
 
 def test_bridge_observation_records_label_not_belief():

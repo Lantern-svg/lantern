@@ -189,21 +189,44 @@ class BoardClient:
         }
 
     # ------------------------------------------------------------------ verify
-    def verify_entry(self, entry_id: Optional[str] = None) -> dict:
+    def verify_entry(self, entry_id: Optional[str] = None,
+                     known_anomalies: Optional[list] = None) -> dict:
         """Real, offline verification of one entry (or the whole board
-        when entry_id is None). Claims only what each check proves."""
+        when entry_id is None). Claims only what each check proves.
+
+        Whole-board verification also performs chain-level analysis
+        (forks, duplicate seqs, gaps, epoch re-anchors) against the
+        explicit known-anomalies allowlist; see analyze_chain(). The
+        top-level status is CORROBORATED only when every per-entry
+        check passes AND the chain has zero UNEXPLAINED anomalies.
+        `known_anomalies` overrides the allowlist for local testing;
+        the table actually used is pinned by its hash in the output.
+        """
         entries = self._list_entries()
         by_id = {_entry_id(p): p for p in entries}
         if entry_id is None:
             reports = [self._verify_one(p, entries, by_id) for p in entries]
+            chain = analyze_chain(entries, known_anomalies=known_anomalies)
+            per_entry_status = _weakest(r["status"] for r in reports) if reports else UNKNOWN
+            unexplained = [a for a in chain["anomalies"] if a["classification"] == UNEXPLAINED]
+            status = per_entry_status
+            if unexplained:
+                # Chain-level integrity cannot be corroborated past an
+                # unexplained anomaly; per-entry results stay reported
+                # separately and unchanged below.
+                status = _weakest([per_entry_status, UNKNOWN])
             return {
-                "status": _weakest(r["status"] for r in reports) if reports else UNKNOWN,
+                "status": status,
+                "per_entry_status": per_entry_status,
                 "board": self.board,
                 "source": self.endpoint,
                 "retrieved_at_ms": int(time.time() * 1000),
                 "checked": len(reports),
+                "head": chain["head"],
+                "chain": chain,
                 "entries": reports,
-                "note": "per-entry states are proven claims, not board self-attestation",
+                "note": ("per-entry states are proven claims, not board self-attestation; "
+                         "top-level status is CORROBORATED only with zero UNEXPLAINED chain anomalies"),
             }
         entry_id = _validate_entry_id(entry_id)
         target = next((p for p in entries if _entry_id(p) == entry_id or str(p.get("message_id")) == entry_id), None)
@@ -214,6 +237,9 @@ class BoardClient:
         report["board"] = self.board
         report["source"] = self.endpoint
         report["retrieved_at_ms"] = int(time.time() * 1000)
+        # BUG-2 fix: every verify result pins the board head it saw, so a
+        # single result is citable on its own.
+        report["head"] = analyze_chain(entries, known_anomalies=known_anomalies)["head"]
         return report
 
     def _verify_one(self, entry: dict, entries: list, by_id: dict) -> dict:
@@ -333,6 +359,171 @@ class BoardClient:
                 }
             raise BoardClientError("board response neither accepted nor rejected the post; treating as failure")
         raise BoardClientError("position stayed stale across retries; no post was made")
+
+
+# ------------------------------------------------------------- chain analysis
+
+FORK_ACKNOWLEDGED = "FORK_ACKNOWLEDGED"
+REANCHOR = "REANCHOR"
+UNEXPLAINED = "UNEXPLAINED"
+
+
+def analyze_chain(entries: list, known_anomalies: Optional[list] = None) -> dict:
+    """Chain-level truth over the whole retrieved board: head, epochs,
+    duplicate seqs, seq gaps, multi-child parents, and an anomaly list in
+    which every structural anomaly is classified FORK_ACKNOWLEDGED,
+    REANCHOR, or UNEXPLAINED against the explicit known-anomalies table.
+
+    Classification never parses prose. A fork row only applies when every
+    one of its acknowledging repair records actually exists on the chain;
+    a reanchor row only applies when the child really continues from the
+    named parent and starts a higher epoch. Anything not covered by a
+    validated row is UNEXPLAINED.
+    """
+    from .known_anomalies import KNOWN_ANOMALIES, table_hash
+
+    table = KNOWN_ANOMALIES if known_anomalies is None else known_anomalies
+    on_chain = {_entry_id(e) for e in entries}
+
+    def _seq(e):
+        try:
+            return int(e.get("seq"))
+        except (TypeError, ValueError):
+            return None
+
+    def _epoch(e):
+        try:
+            return int(e.get("epoch"))
+        except (TypeError, ValueError):
+            return None
+
+    ordered = sorted(entries, key=lambda e: (_seq(e) if _seq(e) is not None else -1,
+                                             e.get("server_ms") or 0))
+    head_entry = ordered[-1] if ordered else None
+    head = None
+    if head_entry is not None:
+        head = {"entry_hash": _entry_id(head_entry), "seq": _seq(head_entry),
+                "epoch": _epoch(head_entry), "message_id": str(head_entry.get("message_id"))}
+
+    # epochs: {epoch, first_seq, last_seq, anchor_entry_hash, record_count}
+    epochs: list[dict] = []
+    by_epoch: dict = {}
+    for e in ordered:
+        by_epoch.setdefault(_epoch(e), []).append(e)
+    for ep in sorted(k for k in by_epoch if k is not None):
+        members = by_epoch[ep]
+        seqs = [s for s in (_seq(m) for m in members) if s is not None]
+        epochs.append({
+            "epoch": ep,
+            "first_seq": min(seqs) if seqs else None,
+            "last_seq": max(seqs) if seqs else None,
+            "anchor_entry_hash": str(members[0].get("prev_hash")),
+            "record_count": len(members),
+        })
+
+    # duplicate seqs (board-global; seq is a board-wide position)
+    seq_map: dict = {}
+    for e in ordered:
+        s = _seq(e)
+        if s is not None:
+            seq_map.setdefault(s, []).append(_entry_id(e))
+    duplicate_seqs = [{"seq": s, "entry_hashes": hs}
+                      for s, hs in sorted(seq_map.items()) if len(hs) > 1]
+
+    # seq gaps: every missing seq within the board's full seq range (which
+    # covers every epoch's range; inter-epoch gaps count too)
+    seq_gaps: list[int] = []
+    if seq_map:
+        lo, hi = min(seq_map), max(seq_map)
+        seq_gaps = [s for s in range(lo, hi + 1) if s not in seq_map]
+
+    # multi-child parents
+    children_map: dict = {}
+    for e in ordered:
+        prev = str(e.get("prev_hash") or "")
+        if prev and prev not in ("GENESIS",):
+            children_map.setdefault(prev, []).append(_entry_id(e))
+    multi_child_parents = [{"parent": p, "children": cs}
+                           for p, cs in sorted(children_map.items()) if len(cs) > 1]
+
+    # validated allowlist rows
+    fork_rows, reanchor_rows = [], []
+    for row in table:
+        if row.get("kind") == "fork":
+            acks = list(row.get("acknowledged_by") or [])
+            if acks and all(a in on_chain for a in acks) \
+                    and all(c in on_chain for c in row.get("children") or []):
+                fork_rows.append(row)
+        elif row.get("kind") == "reanchor":
+            child = next((e for e in ordered if _entry_id(e) == row.get("child")), None)
+            parent_entry = next((e for e in ordered if _entry_id(e) == row.get("parent")), None)
+            if (child is not None and parent_entry is not None
+                    and str(child.get("prev_hash")) == row.get("parent")
+                    and _epoch(child) is not None and _epoch(parent_entry) is not None
+                    and _epoch(child) > _epoch(parent_entry)
+                    and _epoch(child) == row.get("epoch")):
+                reanchor_rows.append(row)
+
+    fork_children = {c for r in fork_rows for c in (r.get("children") or [])}
+    fork_skipped = {s for r in fork_rows for s in (r.get("skipped_seqs") or [])}
+    fork_dup = {s for r in fork_rows for s in (r.get("duplicate_seqs") or [])}
+    reanchor_children = {r.get("child") for r in reanchor_rows}
+
+    def _acks_for(parent):
+        return sorted({a for r in fork_rows if r.get("parent") == parent
+                       for a in (r.get("acknowledged_by") or [])})
+
+    anomalies: list[dict] = []
+    for mcp_item in multi_child_parents:
+        parent, children = mcp_item["parent"], mcp_item["children"]
+        uncovered = [c for c in children if c not in fork_children and c not in reanchor_children]
+        fork_covered = [c for c in children if c in fork_children]
+        reanchored = [c for c in children if c in reanchor_children]
+        if fork_covered:
+            anomalies.append({"type": "multi_child_parent", "parent": parent,
+                              "children": fork_covered,
+                              "classification": FORK_ACKNOWLEDGED,
+                              "acknowledged_by": _acks_for(parent)})
+        for c in reanchored:
+            row = next(r for r in reanchor_rows if r.get("child") == c)
+            anomalies.append({"type": "multi_child_parent", "parent": parent,
+                              "children": [c], "classification": REANCHOR,
+                              "detail": f"epoch {row.get('epoch')} re-anchor to an earlier entry"})
+        if uncovered:
+            anomalies.append({"type": "multi_child_parent", "parent": parent,
+                              "children": uncovered, "classification": UNEXPLAINED,
+                              "detail": "no validated known-anomalies row covers these children"})
+    for dup in duplicate_seqs:
+        # A duplicate seq is acknowledged when the seq is listed in a
+        # validated fork row AND at most one entry at that seq is not a
+        # fork child from the row (the surviving canonical entry).
+        extra = [h for h in dup["entry_hashes"] if h not in fork_children]
+        acknowledged = dup["seq"] in fork_dup and len(extra) <= 1
+        anomalies.append({"type": "duplicate_seq", "seq": dup["seq"],
+                          "entry_hashes": dup["entry_hashes"],
+                          "classification": FORK_ACKNOWLEDGED if acknowledged else UNEXPLAINED,
+                          **({} if acknowledged else
+                             {"detail": "duplicate seq not covered by a validated fork row"})})
+    for gap in seq_gaps:
+        acknowledged = gap in fork_skipped
+        anomalies.append({"type": "seq_gap", "seq": gap,
+                          "classification": FORK_ACKNOWLEDGED if acknowledged else UNEXPLAINED,
+                          **({} if acknowledged else
+                             {"detail": "missing seq not covered by a validated fork row"})})
+
+    return {
+        "head": head,
+        "epochs": epochs,
+        "duplicate_seqs": duplicate_seqs,
+        "seq_gaps": seq_gaps,
+        "multi_child_parents": multi_child_parents,
+        "anomalies": anomalies,
+        "unexplained_count": sum(1 for a in anomalies if a["classification"] == UNEXPLAINED),
+        "known_anomalies_table_hash": table_hash(table),
+        "note": ("anomaly classification comes from the explicit known-anomalies "
+                 "table (pinned by its hash), never from entry prose; a fork row "
+                 "counts only when all its acknowledging records exist on-chain"),
+    }
 
 
 # ----------------------------------------------------------------------

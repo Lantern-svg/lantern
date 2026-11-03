@@ -12,10 +12,14 @@ import time
 from dataclasses import asdict, dataclass, field
 from typing import Any, Optional
 
-# Display states. NOT_CONFIGURED / NOT_CONNECTED are component states, not
-# evidence labels: they describe wiring and reachability, not belief.
+# Display states. NOT_CONFIGURED / NOT_CONNECTED / NOT_PROBED are component
+# states, not evidence labels: they describe wiring, reachability, and
+# whether a check has run at all -- not belief. NOT_PROBED specifically
+# means "no check has been attempted yet"; UNKNOWN is reserved for a check
+# that ran and could not decide.
 NOT_CONFIGURED = "NOT_CONFIGURED"
 NOT_CONNECTED = "NOT_CONNECTED"
+NOT_PROBED = "NOT_PROBED"
 ERROR = "ERROR"
 
 OBSERVED = "OBSERVED"
@@ -27,7 +31,7 @@ BLOCKED = "BLOCKED"
 UNKNOWN = "UNKNOWN"
 
 EVIDENCE_LABELS = (OBSERVED, VERIFIED, CORROBORATED, CLAIMED, DISPROVEN, BLOCKED, UNKNOWN)
-COMPONENT_STATES = (NOT_CONFIGURED, NOT_CONNECTED, ERROR)
+COMPONENT_STATES = (NOT_CONFIGURED, NOT_CONNECTED, NOT_PROBED, ERROR)
 
 
 def now_ms() -> int:
