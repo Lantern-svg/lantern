@@ -206,7 +206,7 @@ def test_authoritative_unresolved_adopted_when_latest_epoch_forked():
     assert ba["authoritative_state"] == "AUTHORITATIVE_UNRESOLVED"
     assert ba["authoritative_head"] is None, \
         "never a head from an ambiguous lineage"
-    assert ba["fork"]["type"] == "fork"
+    assert ba["first_break"]["type"] == "fork"
     assert ba["canonical_epoch"] == 1 and ba["canonical_head"] == H[3]
     # the verify result itself refuses to emit a single head
     assert result["head"] is None
@@ -224,10 +224,20 @@ def test_authoritative_ok_when_latest_epoch_valid():
     assert result["head"] is not None
 
 
-def test_non_fork_break_keeps_existing_reporting():
-    tampered = _board_verify_response(
-        latest_valid=False, first_break={"type": "tamper", "post_id": "x"})
-    fake = _FakeTransportBoard(_linear(3), verify_response=tampered)
-    ba = fake.client.verify_entry(known_anomalies=[])["board_analysis"]
-    assert ba["authoritative_state"] == "AUTHORITATIVE_OK"
-    assert ba["authoritative_head"] == H[5]
+def test_any_invalid_latest_epoch_is_authoritative_unresolved():
+    """Amendment-1 extension: tamper and orphan breaks (and broken anchors)
+    in the LATEST epoch also withhold the authoritative head."""
+    for fb in ({"type": "tamper", "post_id": "x"},
+               {"type": "orphan", "post_ids": ["y"]},
+               None):  # anchor-invalid epoch may carry no first_break
+        broken = _board_verify_response(latest_valid=False, first_break=fb)
+        fake = _FakeTransportBoard(_linear(3), verify_response=broken)
+        result = fake.client.verify_entry(known_anomalies=[])
+        ba = result["board_analysis"]
+        assert ba["authoritative_state"] == "AUTHORITATIVE_UNRESOLVED", fb
+        assert ba["authoritative_head"] is None, fb
+        assert result["head"] is None, fb
+        if fb is not None:
+            assert ba["first_break"] == fb
+        # canonical (last VALID epoch) reporting is unchanged
+        assert ba["canonical_epoch"] == 1 and ba["canonical_head"] == H[3]

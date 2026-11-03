@@ -197,23 +197,26 @@ class BoardClient:
         detector, so the contact verifier must expose rather than shadow it.
 
         Adopts AUTHORITATIVE_UNRESOLVED from BOARD_FORK_RESOLUTION.md on
-        the read side: when the LATEST epoch is not valid and its
-        first_break is a fork, authoritative_head is reported as None
-        (never a head from an ambiguous lineage) and authoritative_state
-        is AUTHORITATIVE_UNRESOLVED, with the fork's details carried
-        verbatim. Non-fork breaks keep the board's existing reporting.
+        the read side, EXTENDED per the owner's 2026-11-03 Amendment-1
+        directive: when the LATEST epoch is not valid for ANY reason
+        (fork, tamper, orphan, or broken anchor), authoritative_head is
+        reported as None (never a head from a broken walk) and
+        authoritative_state is AUTHORITATIVE_UNRESOLVED, with the break
+        carried verbatim. This deliberately extends the proposal's §1,
+        which scoped the state to forks: a tampered or orphaned latest
+        epoch emits a head from a broken lineage just as a forked one
+        does, and presenting it as authoritative is the same lie of
+        omission. The write-side ceremony (§2-3) is untouched.
         """
         resp = self._call({"action": "verify", "board": self.board})
         epochs = resp.get("epochs") or []
         latest = epochs[-1] if epochs else None
         state = "AUTHORITATIVE_OK"
-        fork = None
+        first_break = (latest or {}).get("first_break") or None
         authoritative_head = resp.get("authoritative_head")
-        first_break = (latest or {}).get("first_break") or {}
-        if latest is not None and not latest.get("valid") and first_break.get("type") == "fork":
+        if latest is not None and not latest.get("valid"):
             state = "AUTHORITATIVE_UNRESOLVED"
-            authoritative_head = None  # a single head on a forked chain is a lie of omission
-            fork = first_break
+            authoritative_head = None  # a single head from a broken walk is a lie of omission
         return {
             "status": OBSERVED,
             "total": resp.get("total"),
@@ -223,10 +226,12 @@ class BoardClient:
             "authoritative_head": authoritative_head,
             "canonical_epoch": resp.get("canonical_epoch"),
             "canonical_head": resp.get("canonical_head"),
-            **({"fork": fork} if fork else {}),
+            **({"first_break": first_break}
+               if (first_break and state == "AUTHORITATIVE_UNRESOLVED") else {}),
             "note": ("board self-attestation via action=verify (production analyze()); "
                      "OBSERVED, not an independent check. AUTHORITATIVE_UNRESOLVED "
-                     "semantics per BOARD_FORK_RESOLUTION.md adopted on the read side."),
+                     "per BOARD_FORK_RESOLUTION.md, extended to ANY invalid latest "
+                     "epoch per owner Amendment-1 directive 2026-11-03."),
         }
 
     def verify_entry(self, entry_id: Optional[str] = None,
