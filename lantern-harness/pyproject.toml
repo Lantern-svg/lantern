@@ -17,6 +17,9 @@ dependencies = []
 [project.optional-dependencies]
 dev = [
     "pytest>=7.0",
+    # 5 MCP transport tests fail collection without the mcp package;
+    # the dev environment is expected to run the FULL suite (338 tests).
+    "mcp>=2.0.0",
 ]
 ollama = [
     "httpx>=0.24.0",
